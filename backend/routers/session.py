@@ -1,3 +1,4 @@
+from typing import List
 from fastapi import APIRouter, HTTPException
 from models.session_models import (
     BoardStateResponse,
@@ -10,10 +11,13 @@ from models.session_models import (
     SessionJoinRequest,
     SessionJoinResponse,
     SessionInfoResponse,
+    SectionListItem,
+    StopClassRequest,
 )
 from services.session_service import (
     clear_board,
     create_session,
+    delete_session,
     get_session,
     start_board_share,
     start_class,
@@ -43,7 +47,39 @@ def get_session_endpoint(session_id: str):
     session = get_session(session_id)
     if session is None:
         raise HTTPException(status_code=404, detail="세션을 찾을 수 없습니다.")
-    return SessionInfoResponse(**session.dict())
+    data = session.dict()
+    data['sections'] = [
+        SectionListItem(
+            index=s.index,
+            started_at=s.started_at,
+            ended_at=s.ended_at,
+            name=s.name,
+            has_summary=s.generated_note is not None,
+            ocr_count=len(s.ocr_history),
+            stt_count=len(s.stt_history),
+        )
+        for s in session.sections
+    ]
+    return SessionInfoResponse(**data)
+
+
+@router.get("/{session_id}/sections", response_model=List[SectionListItem])
+def get_sections_endpoint(session_id: str):
+    session = get_session(session_id)
+    if session is None:
+        raise HTTPException(status_code=404, detail="세션을 찾을 수 없습니다.")
+    return [
+        SectionListItem(
+            index=s.index,
+            started_at=s.started_at,
+            ended_at=s.ended_at,
+            name=s.name,
+            has_summary=s.generated_note is not None,
+            ocr_count=len(s.ocr_history),
+            stt_count=len(s.stt_history),
+        )
+        for s in session.sections
+    ]
 
 
 @router.get("/{session_id}/board", response_model=BoardStateResponse)
@@ -97,6 +133,14 @@ def start_class_endpoint(session_id: str):
     )
 
 
+@router.delete("/{session_id}")
+def delete_session_endpoint(session_id: str):
+    deleted = delete_session(session_id)
+    if not deleted:
+        raise HTTPException(status_code=404, detail="세션을 찾을 수 없습니다.")
+    return {"deleted": True}
+
+
 @router.post("/{session_id}/share/start", response_model=ShareStateResponse)
 def start_share_endpoint(session_id: str):
     session = start_board_share(session_id)
@@ -116,8 +160,8 @@ def stop_share_endpoint(session_id: str):
 
 
 @router.post("/{session_id}/stop", response_model=ClassStateResponse)
-def stop_class_endpoint(session_id: str):
-    session = stop_class(session_id)
+def stop_class_endpoint(session_id: str, request: StopClassRequest = StopClassRequest()):
+    session = stop_class(session_id, section_name=request.section_name)
     if session is None:
         raise HTTPException(status_code=404, detail="세션을 찾을 수 없습니다.")
 

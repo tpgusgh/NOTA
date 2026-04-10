@@ -8,8 +8,9 @@ from models.session_models import (
     NoteShareRequest,
     NoteShareResponse,
     PublicNoteResponse,
+    SectionSummaryRequest,
 )
-from services.note_service import generate_note_for_session, approve_note_for_session, share_note_for_session
+from services.note_service import generate_note_for_session, approve_note_for_session, share_note_for_session, generate_section_summary
 from services.session_service import get_session
 
 router = APIRouter(prefix="/api/note", tags=["note"])
@@ -25,6 +26,11 @@ def approve_note(request: NoteApproveRequest):
 @router.post("/share", response_model=NoteShareResponse)
 def share_note(request: NoteShareRequest):
     return share_note_for_session(request)
+
+@router.post("/section-summary", response_model=NoteGenerateResponse)
+def generate_section_summary_endpoint(request: SectionSummaryRequest):
+    return generate_section_summary(request)
+
 
 @router.get("/public/{session_id}", response_model=PublicNoteResponse)
 def get_public_note(session_id: str):

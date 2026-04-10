@@ -19,7 +19,8 @@ body,
 
 body {
   margin: 0;
-  background: #f8fafc;
+  background: linear-gradient(160deg, #eef2ff 0%, #f8fafc 45%, #f0fdf4 100%);
+  background-attachment: fixed;
   color: #0f172a;
 }
 

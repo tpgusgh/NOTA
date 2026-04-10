@@ -62,75 +62,95 @@ function TeacherSetup() {
   }
 
   return (
-    <main className="page-shell">
-      <h1>수업 목적 설정</h1>
-      <form className="form-card" onSubmit={handleSubmit}>
-        <label>
-          수업 제목
-          <input
-            type="text"
-            value={title}
-            onChange={(event) => setTitle(event.target.value)}
-            placeholder="수업 제목을 입력하세요"
-            required
-          />
-        </label>
+    <main className="page-shell max-w-3xl">
+      <div className="rounded-3xl bg-gradient-to-br from-violet-50 via-white to-indigo-50 p-10 shadow-sm ring-1 ring-violet-100">
+        <div className="mb-6 flex h-12 w-12 items-center justify-center rounded-2xl bg-violet-600 text-white text-xl shadow-sm">
+          ✏️
+        </div>
+        <h1 className="text-2xl font-bold text-slate-900">새 수업 만들기</h1>
+        <p className="mt-2 text-sm text-slate-500">수업 정보를 입력하고 AI가 최적화된 학습 환경을 준비합니다.</p>
 
-        <label>
-          학습 목표
-          <textarea
-            value={goals}
-            onChange={(event) => setGoals(event.target.value)}
-            placeholder="학습 목표를 자세히 입력하세요"
-            rows={4}
-            required
-          />
-        </label>
-
-        <label>
-          핵심 키워드
-          <input
-            type="text"
-            value={keywordInput}
-            onChange={(event) => setKeywordInput(event.target.value)}
-            onKeyDown={handleKeywordKeyDown}
-            onCompositionStart={handleCompositionStart}
-            onCompositionEnd={handleCompositionEnd}
-            onBlur={() => {
-              addKeyword(keywordInput)
-              setKeywordInput('')
-            }}
-            placeholder="키워드를 입력하고 Enter 또는 쉼표로 추가"
-          />
-        </label>
-
-        {keywords.length > 0 && (
-          <div className="tag-list">
-            {keywords.map((keyword) => (
-              <button type="button" key={keyword} className="tag-item" onClick={() => handleRemoveKeyword(keyword)}>
-                {keyword} ×
-              </button>
-            ))}
+        <form className="mt-8 space-y-5" onSubmit={handleSubmit}>
+          <div>
+            <label className="text-sm font-semibold text-slate-700">수업 제목</label>
+            <input
+              type="text"
+              value={title}
+              onChange={(event) => setTitle(event.target.value)}
+              className="mt-2 w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-slate-900 shadow-sm outline-none transition focus:border-violet-400 focus:ring-1 focus:ring-violet-100"
+              placeholder="수업 제목을 입력하세요"
+              required
+            />
           </div>
-        )}
 
-        <label>
-          학습 내용
-          <textarea
-            value={emphasis}
-            onChange={(event) => setEmphasis(event.target.value)}
-            placeholder="이번 수업에서 다룰 학습 내용을 입력하세요"
-            rows={4}
-            required
-          />
-        </label>
+          <div>
+            <label className="text-sm font-semibold text-slate-700">학습 목표</label>
+            <textarea
+              value={goals}
+              onChange={(event) => setGoals(event.target.value)}
+              className="mt-2 w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-slate-900 shadow-sm outline-none transition focus:border-violet-400 focus:ring-1 focus:ring-violet-100"
+              placeholder="학습 목표를 자세히 입력하세요"
+              rows={3}
+              required
+            />
+          </div>
 
-        {error && <p className="error-text">{error}</p>}
+          <div>
+            <label className="text-sm font-semibold text-slate-700">핵심 키워드</label>
+            <input
+              type="text"
+              value={keywordInput}
+              onChange={(event) => setKeywordInput(event.target.value)}
+              onKeyDown={handleKeywordKeyDown}
+              onCompositionStart={handleCompositionStart}
+              onCompositionEnd={handleCompositionEnd}
+              onBlur={() => {
+                addKeyword(keywordInput)
+                setKeywordInput('')
+              }}
+              className="mt-2 w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-slate-900 shadow-sm outline-none transition focus:border-violet-400 focus:ring-1 focus:ring-violet-100"
+              placeholder="키워드를 입력하고 Enter 또는 쉼표로 추가"
+            />
+          </div>
 
-        <button className="button primary" type="submit" disabled={isSubmitting}>
-          {isSubmitting ? '저장 중...' : '수업 시작하기'}
-        </button>
-      </form>
+          {keywords.length > 0 && (
+            <div className="flex flex-wrap gap-2">
+              {keywords.map((keyword) => (
+                <button
+                  type="button"
+                  key={keyword}
+                  onClick={() => handleRemoveKeyword(keyword)}
+                  className="rounded-full border border-indigo-200 bg-indigo-50 px-3 py-1 text-sm font-medium text-indigo-700 transition hover:bg-indigo-100"
+                >
+                  {keyword} ×
+                </button>
+              ))}
+            </div>
+          )}
+
+          <div>
+            <label className="text-sm font-semibold text-slate-700">학습 내용</label>
+            <textarea
+              value={emphasis}
+              onChange={(event) => setEmphasis(event.target.value)}
+              className="mt-2 w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-slate-900 shadow-sm outline-none transition focus:border-violet-400 focus:ring-1 focus:ring-violet-100"
+              placeholder="이번 수업에서 다룰 학습 내용을 입력하세요"
+              rows={4}
+              required
+            />
+          </div>
+
+          {error && <p className="text-sm text-rose-600">{error}</p>}
+
+          <button
+            type="submit"
+            disabled={isSubmitting}
+            className="w-full rounded-2xl bg-violet-600 px-6 py-3.5 font-semibold text-white shadow-sm transition hover:bg-violet-500 disabled:cursor-not-allowed disabled:opacity-70"
+          >
+            {isSubmitting ? '수업 생성 중...' : '수업 시작하기'}
+          </button>
+        </form>
+      </div>
     </main>
   )
 }

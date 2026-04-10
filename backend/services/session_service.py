@@ -3,7 +3,7 @@ import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Dict
-from models.session_models import SessionCreateRequest, SessionData
+from models.session_models import SessionCreateRequest, SessionData, SectionData
 
 DATA_DIR = Path(__file__).resolve().parent.parent / 'data'
 DATA_FILE = DATA_DIR / 'sessions.json'
@@ -68,14 +68,28 @@ def start_class(session_id: str) -> SessionData | None:
     session.is_class_active = True
     session.class_started_at = datetime.now(timezone.utc).isoformat()
     session.is_board_shared = True
+    session.current_section_ocr_start = len(session.ocr_history)
+    session.current_section_stt_start = len(session.stt_history)
     _save_sessions()
     return session
 
 
-def stop_class(session_id: str) -> SessionData | None:
+def stop_class(session_id: str, section_name: str | None = None) -> SessionData | None:
     session = get_session(session_id)
     if session is None:
         return None
+
+    if session.is_class_active and session.class_started_at:
+        section = SectionData(
+            index=len(session.sections),
+            started_at=session.class_started_at,
+            ended_at=datetime.now(timezone.utc).isoformat(),
+            name=section_name,
+            ocr_history=session.ocr_history[session.current_section_ocr_start:],
+            stt_history=session.stt_history[session.current_section_stt_start:],
+            board_snapshot=session.board_data_url,
+        )
+        session.sections.append(section)
 
     session.is_class_active = False
     session.is_board_shared = False
@@ -114,6 +128,14 @@ def clear_board(session_id: str) -> SessionData | None:
     session.last_ocr_image_hash = None
     _save_sessions()
     return session
+
+
+def delete_session(session_id: str) -> bool:
+    if session_id not in _sessions:
+        return False
+    del _sessions[session_id]
+    _save_sessions()
+    return True
 
 
 def save_sessions() -> None:

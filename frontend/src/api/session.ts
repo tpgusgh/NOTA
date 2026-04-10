@@ -19,6 +19,16 @@ export interface JoinSessionResponse {
   goals: string
 }
 
+export interface SectionListItem {
+  index: number
+  started_at: string
+  ended_at: string
+  name?: string
+  has_summary: boolean
+  ocr_count: number
+  stt_count: number
+}
+
 export interface SessionInfoResponse {
   session_id: string
   title: string
@@ -36,6 +46,7 @@ export interface SessionInfoResponse {
   generated_note?: string
   approved_note?: string
   public_note?: string
+  sections: SectionListItem[]
 }
 
 export interface BoardStateResponse {
@@ -144,9 +155,11 @@ export async function startClass(session_id: string): Promise<ClassStateResponse
   return response.json()
 }
 
-export async function stopClass(session_id: string): Promise<ClassStateResponse> {
+export async function stopClass(session_id: string, section_name?: string): Promise<ClassStateResponse> {
   const response = await fetch(`${baseUrl}/api/session/${session_id}/stop`, {
     method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ section_name: section_name ?? null }),
   })
 
   if (!response.ok) {
@@ -175,6 +188,32 @@ export async function stopShare(session_id: string): Promise<ShareStateResponse>
 
   if (!response.ok) {
     throw new Error('공유 종료에 실패했습니다.')
+  }
+
+  return response.json()
+}
+
+export async function deleteSession(session_id: string): Promise<void> {
+  const response = await fetch(`${baseUrl}/api/session/${session_id}`, {
+    method: 'DELETE',
+  })
+
+  if (!response.ok) {
+    const error = await response.text()
+    throw new Error(error || '수업 삭제에 실패했습니다.')
+  }
+}
+
+export async function generateSectionSummary(session_id: string, section_index: number): Promise<{ note: string }> {
+  const response = await fetch(`${baseUrl}/api/note/section-summary`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ session_id, section_index }),
+  })
+
+  if (!response.ok) {
+    const error = await response.text()
+    throw new Error(error || '섹션 요약 생성에 실패했습니다.')
   }
 
   return response.json()

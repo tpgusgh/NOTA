@@ -1,12 +1,12 @@
 import { PointerEvent, useEffect, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { analyzeFeedback, askFollowup } from '../api/feedback'
+import { analyzeFeedback, analyzeFeedbackWithImage, askFollowup } from '../api/feedback'
 import { generateNote } from '../api/note'
 import { analyzeOcr, extractOcrText } from '../api/ocr'
-import { getSessionInfo, saveBoardState, clearBoardState, startClass, stopClass, startShare, stopShare } from '../api/session'
+import { getSessionInfo, saveBoardState, clearBoardState, startClass, stopClass, startShare, stopShare, generateSectionSummary, deleteSession } from '../api/session'
 import { saveStt } from '../api/stt'
-import { getStoredSessionId, getStoredUserRole, setStoredFeedbackResult, UserRole } from '../utils/session'
-import type { SessionInfoResponse } from '../api/session'
+import { getStoredSessionId, getStoredUserRole, setStoredFeedbackResult, clearSession, removeJoinedSession, UserRole } from '../utils/session'
+import type { SessionInfoResponse, SectionListItem } from '../api/session'
 
 const BOARD_WIDTH = 960
 const BOARD_HEIGHT = 560
@@ -52,6 +52,25 @@ function Classroom() {
   const [feedback, setFeedback] = useState({ missing: '', suggestions: '', positives: '' })
   const [followupQuestion, setFollowupQuestion] = useState('')
   const [followupAnswer, setFollowupAnswer] = useState('')
+  const [penColor, setPenColor] = useState('#0f172a')
+  const [isEraser, setIsEraser] = useState(false)
+  const [penSize, setPenSize] = useState(4)
+  const [studentPenColor, setStudentPenColor] = useState('#0f172a')
+  const [studentIsEraser, setStudentIsEraser] = useState(false)
+  const [studentPenSize, setStudentPenSize] = useState(4)
+  // 수업 종료 / 피드백 모달
+  const [showEndModal, setShowEndModal] = useState(false)
+  const [showFeedbackModal, setShowFeedbackModal] = useState(false)
+  const [feedbackModalSectionIndex, setFeedbackModalSectionIndex] = useState<number | null>(null)
+  const [feedbackModalNote, setFeedbackModalNote] = useState('')
+  const [feedbackModalPhoto, setFeedbackModalPhoto] = useState<string | null>(null)
+  const [feedbackModalPhotoName, setFeedbackModalPhotoName] = useState('')
+  const [feedbackModalResult, setFeedbackModalResult] = useState<{ missing: string; suggestions: string; positives: string } | null>(null)
+  const [isSubmittingFeedback, setIsSubmittingFeedback] = useState(false)
+  // 섹션 요약
+  const [sectionSummaries, setSectionSummaries] = useState<Record<number, string>>({})
+  const [loadingSummaryIndex, setLoadingSummaryIndex] = useState<number | null>(null)
+  const [expandedSectionIndex, setExpandedSectionIndex] = useState<number | null>(null)
   const isTeacher = userRole === 'teacher'
   const isClassActive = sessionInfo?.is_class_active ?? false
   const isBoardShared = sessionInfo?.is_board_shared ?? false
@@ -160,7 +179,8 @@ function Classroom() {
     ctx.lineWidth = 4
     ctx.lineCap = 'round'
     ctx.lineJoin = 'round'
-    ctx.strokeStyle = '#0f172a'
+    ctx.strokeStyle = penColor
+    ctx.globalCompositeOperation = isEraser ? 'destination-out' : 'source-over'
     paintBoardBackground()
   }
 
@@ -185,7 +205,8 @@ function Classroom() {
     ctx.lineWidth = 4
     ctx.lineCap = 'round'
     ctx.lineJoin = 'round'
-    ctx.strokeStyle = '#0f172a'
+    ctx.strokeStyle = penColor
+    ctx.globalCompositeOperation = isEraser ? 'destination-out' : 'source-over'
     ctx.fillStyle = '#ffffff'
     ctx.fillRect(0, 0, canvas.width, canvas.height)
   }
@@ -374,9 +395,10 @@ function Classroom() {
   const drawDot = (point: BoardPoint) => {
     const ctx = getBoardContext()
     if (!ctx) return
+    ctx.globalCompositeOperation = isEraser ? 'destination-out' : 'source-over'
+    ctx.fillStyle = isEraser ? 'rgba(0,0,0,1)' : penColor
     ctx.beginPath()
-    ctx.arc(point.x, point.y, 2, 0, Math.PI * 2)
-    ctx.fillStyle = '#0f172a'
+    ctx.arc(point.x, point.y, (isEraser ? penSize * 3 : penSize) / 2, 0, Math.PI * 2)
     ctx.fill()
   }
 
@@ -404,6 +426,9 @@ function Classroom() {
     const ctx = getBoardContext()
     if (!point || !ctx) return
 
+    ctx.globalCompositeOperation = isEraser ? 'destination-out' : 'source-over'
+    ctx.strokeStyle = isEraser ? 'rgba(0,0,0,1)' : penColor
+    ctx.lineWidth = isEraser ? penSize * 3 : penSize
     ctx.beginPath()
     ctx.moveTo(lastPointRef.current.x, lastPointRef.current.y)
     ctx.lineTo(point.x, point.y)
@@ -481,9 +506,10 @@ function Classroom() {
     if (!canvas) return
     const ctx = canvas.getContext('2d')
     if (!ctx) return
+    ctx.globalCompositeOperation = studentIsEraser ? 'destination-out' : 'source-over'
+    ctx.fillStyle = studentIsEraser ? 'rgba(0,0,0,1)' : studentPenColor
     ctx.beginPath()
-    ctx.arc(point.x, point.y, 2, 0, Math.PI * 2)
-    ctx.fillStyle = '#0f172a'
+    ctx.arc(point.x, point.y, (studentIsEraser ? studentPenSize * 3 : studentPenSize) / 2, 0, Math.PI * 2)
     ctx.fill()
   }
 
@@ -509,6 +535,9 @@ function Classroom() {
     const ctx = canvas.getContext('2d')
     if (!ctx) return
 
+    ctx.globalCompositeOperation = studentIsEraser ? 'destination-out' : 'source-over'
+    ctx.strokeStyle = studentIsEraser ? 'rgba(0,0,0,1)' : studentPenColor
+    ctx.lineWidth = studentIsEraser ? studentPenSize * 3 : studentPenSize
     ctx.beginPath()
     ctx.moveTo(studentLastPointRef.current.x, studentLastPointRef.current.y)
     ctx.lineTo(point.x, point.y)
@@ -704,41 +733,74 @@ function Classroom() {
     return noteParts.join('\n\n').trim()
   }
 
-  const handleRunEndOfClassComparison = async () => {
-    if (!sessionId) {
-      appendLog('세션 ID가 없습니다.')
+  const handleRunEndOfClassComparison = () => {
+    // 학생 필기 메모 사전 채워두기
+    setFeedbackModalNote(studentNote)
+    setFeedbackModalSectionIndex(null)
+    setFeedbackModalResult(null)
+    setFeedbackModalPhoto(null)
+    setFeedbackModalPhotoName('')
+    setShowEndModal(true)
+  }
+
+  const handleOpenSectionFeedback = (sectionIndex: number) => {
+    setFeedbackModalNote(studentNote)
+    setFeedbackModalSectionIndex(sectionIndex)
+    setFeedbackModalResult(null)
+    setFeedbackModalPhoto(null)
+    setFeedbackModalPhotoName('')
+    setShowFeedbackModal(true)
+  }
+
+  const handleFeedbackPhotoChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    if (!file) return
+    setFeedbackModalPhotoName(file.name)
+    const reader = new FileReader()
+    reader.onload = (ev) => {
+      const result = ev.target?.result
+      if (typeof result === 'string') {
+        // strip data URL prefix, keep raw base64
+        const base64 = result.split(',')[1] ?? result
+        setFeedbackModalPhoto(base64)
+      }
+    }
+    reader.readAsDataURL(file)
+  }
+
+  const handleSubmitModalFeedback = async () => {
+    if (!sessionId) return
+    setIsSubmittingFeedback(true)
+    try {
+      const result = await analyzeFeedbackWithImage({
+        session_id: sessionId,
+        student_note: feedbackModalNote,
+        image_base64: feedbackModalPhoto ?? undefined,
+        section_index: feedbackModalSectionIndex ?? undefined,
+      })
+      setFeedbackModalResult({ missing: result.missing, suggestions: result.suggestions, positives: result.positives })
+    } catch (error) {
+      appendLog(error instanceof Error ? error.message : '피드백 분석에 실패했습니다.')
+    } finally {
+      setIsSubmittingFeedback(false)
+    }
+  }
+
+  const handleGenerateSectionSummary = async (section: SectionListItem) => {
+    if (!sessionId) return
+    if (sectionSummaries[section.index] !== undefined) {
+      setExpandedSectionIndex(section.index)
       return
     }
-
+    setLoadingSummaryIndex(section.index)
     try {
-      setStatus('수업 종료 후 학생 필기를 비교하는 중입니다...')
-      const combinedStudentNote = await buildStudentComparisonNote()
-      if (!combinedStudentNote) {
-        appendLog('비교할 학생 필기가 없습니다. 개인 전자칠판이나 메모를 먼저 남겨주세요.')
-        return
-      }
-
-      const result = await analyzeFeedback({ session_id: sessionId, student_note: combinedStudentNote })
-      setStoredFeedbackResult({
-        studentNote: combinedStudentNote,
-        missing: result.missing,
-        suggestions: result.suggestions,
-        positives: result.positives,
-      })
-      setFeedback({ missing: result.missing, suggestions: result.suggestions, positives: result.positives })
-      window.alert('수업이 종료되었습니다. 결과 화면으로 이동합니다.')
-      navigate('/feedback', {
-        state: {
-          feedbackResult: {
-            studentNote: combinedStudentNote,
-            missing: result.missing,
-            suggestions: result.suggestions,
-            positives: result.positives,
-          },
-        },
-      })
+      const result = await generateSectionSummary(sessionId, section.index)
+      setSectionSummaries((prev) => ({ ...prev, [section.index]: result.note }))
+      setExpandedSectionIndex(section.index)
     } catch (error) {
-      appendLog(error instanceof Error ? error.message : '수업 종료 후 필기 비교에 실패했습니다.')
+      appendLog(error instanceof Error ? error.message : '수업 요약 생성에 실패했습니다.')
+    } finally {
+      setLoadingSummaryIndex(null)
     }
   }
 
@@ -828,6 +890,30 @@ function Classroom() {
     }
   }
 
+  const handleLeaveSession = () => {
+    if (!sessionId) return
+    removeJoinedSession(sessionId)
+    clearSession()
+    navigate('/')
+  }
+
+  const handleDeleteSession = async () => {
+    if (!sessionId) return
+    const title = sessionInfo?.title ?? '이 수업'
+    if (!window.confirm(`"${title}"을(를) 완전히 삭제하시겠습니까?\n모든 수업 데이터가 사라지며 복구할 수 없습니다.`)) return
+    try {
+      stopBoardTimers()
+      stopSessionPolling()
+      stopSpeechRecognition()
+      await deleteSession(sessionId)
+      removeJoinedSession(sessionId)
+      clearSession()
+      navigate('/')
+    } catch (error) {
+      appendLog(error instanceof Error ? error.message : '수업 삭제에 실패했습니다.')
+    }
+  }
+
   const latestBoardText = sessionInfo?.latest_ocr_text || '전자칠판 OCR 결과가 아직 없습니다.'
   const savedSpeechText = sessionInfo?.stt_history.join('\n\n') || '저장된 음성 기록이 아직 없습니다.'
 
@@ -880,52 +966,66 @@ function Classroom() {
 
   return (
     <main className="page-shell space-y-6">
-      <div className="rounded-3xl bg-white p-6 shadow-sm">
+      <div className={`rounded-3xl p-6 shadow-sm ring-1 ${isTeacher ? 'bg-gradient-to-br from-violet-50 via-white to-indigo-50 ring-violet-100' : 'bg-gradient-to-br from-sky-50 via-white to-cyan-50 ring-sky-100'}`}>
         <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
           <div>
-            <h1 className="text-2xl font-semibold text-slate-900">공용 전자칠판 수업 공간</h1>
-            <p className="mt-2 text-slate-600">
-              교사와 학생이 같은 전자칠판에 직접 쓰고, 그 보드를 이미지로 저장한 뒤 OCR로 텍스트를 추출합니다.
+            <h1 className="text-2xl font-bold text-slate-900">
+              {isTeacher ? '수업 진행' : '수업 참여 중'}
+            </h1>
+            <p className="mt-1 text-sm text-slate-500">
+              {sessionInfo?.title || '수업 제목 없음'} {sessionInfo?.goals ? `· ${sessionInfo.goals}` : ''}
             </p>
           </div>
-          <button
-            type="button"
-            onClick={() => navigate('/')}
-            className="rounded-3xl bg-slate-900 px-5 py-3 text-white transition hover:bg-slate-700"
-          >
-            대시보드로 돌아가기
-          </button>
+          <div className="flex flex-wrap gap-2">
+            <button
+              type="button"
+              onClick={() => navigate('/')}
+              className="rounded-2xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-medium text-slate-600 shadow-sm transition hover:bg-slate-50"
+            >
+              ← 대시보드
+            </button>
+            {!isTeacher && (
+              <button
+                type="button"
+                onClick={handleLeaveSession}
+                className="rounded-2xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-medium text-slate-500 shadow-sm transition hover:bg-slate-50"
+              >
+                수업 나가기
+              </button>
+            )}
+          </div>
         </div>
       </div>
 
       <div className={`grid gap-6 ${isTeacher ? '' : 'xl:grid-cols-[1.5fr_0.9fr]'}`}>
-        <section className="rounded-3xl bg-white p-6 shadow-sm">
-          <div className="mb-6 grid gap-3 sm:grid-cols-2">
-            <div>
-              <p className="text-sm text-slate-500">수업 제목</p>
-              <p className="text-lg font-semibold text-slate-900">{sessionInfo?.title || '알 수 없는 수업'}</p>
-              <p className="mt-2 text-sm text-slate-600">{sessionInfo?.goals || '학습 목표가 없습니다.'}</p>
-            </div>
-            <div className="rounded-3xl bg-slate-50 p-4 text-slate-700">
-              <p className="text-sm">세션 코드</p>
-              <p className="mt-2 font-semibold">{sessionId}</p>
-              <p className="mt-3 text-sm">역할: {isTeacher ? '교사' : '학생'}</p>
-              <p className="mt-2 text-sm">수업 상태: {isClassActive ? '진행 중' : '시작 전'}</p>
-              <p className="mt-2 text-sm">공유 상태: {isBoardShared ? '공유 중' : '공유 전'}</p>
-              <p className="mt-2 text-sm">
-                보드 저장 상태: {isSavingBoard ? '저장 중' : '대기 중'}
-                {isRunningOcr ? ' / OCR 분석 중' : ''}
-              </p>
-            </div>
+        <section className="rounded-3xl bg-white p-6 shadow-sm ring-1 ring-slate-100">
+          {/* 상태 배지 행 */}
+          <div className="mb-5 flex flex-wrap items-center gap-2">
+            <span className={`rounded-full px-3 py-1 text-xs font-semibold ${
+              isClassActive ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-100 text-slate-500'
+            }`}>
+              {isClassActive ? '● 수업 진행 중' : '○ 수업 대기 중'}
+            </span>
+            {isBoardShared && (
+              <span className="rounded-full bg-sky-100 px-3 py-1 text-xs font-semibold text-sky-700">
+                ↗ 공유 중
+              </span>
+            )}
+            {(isSavingBoard || isRunningOcr) && (
+              <span className="rounded-full bg-amber-100 px-3 py-1 text-xs font-semibold text-amber-700">
+                {isSavingBoard ? '저장 중...' : 'OCR 분석 중...'}
+              </span>
+            )}
+            <span className="ml-auto font-mono text-xs text-slate-400">{sessionId}</span>
           </div>
 
           {isTeacher ? (
-            <div className="mb-6 flex flex-wrap gap-3">
+            <div className="mb-5 flex flex-wrap gap-2">
               <button
                 type="button"
                 onClick={() => void handleStartClass()}
                 disabled={isClassActive}
-                className="rounded-3xl bg-emerald-600 px-5 py-3 text-white transition hover:bg-emerald-500 disabled:cursor-not-allowed disabled:opacity-60"
+                className="rounded-2xl bg-emerald-600 px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-emerald-500 disabled:cursor-not-allowed disabled:opacity-50"
               >
                 수업 시작
               </button>
@@ -933,15 +1033,15 @@ function Classroom() {
                 type="button"
                 onClick={() => void handleStopClass()}
                 disabled={!isClassActive}
-                className="rounded-3xl bg-slate-200 px-5 py-3 text-slate-900 transition hover:bg-slate-300 disabled:cursor-not-allowed disabled:opacity-60"
-                >
+                className="rounded-2xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 shadow-sm transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+              >
                 수업 종료
               </button>
               <button
                 type="button"
                 onClick={() => void handleStartShare()}
                 disabled={!isClassActive || isBoardShared}
-                className="rounded-3xl bg-sky-600 px-5 py-3 text-white transition hover:bg-sky-500 disabled:cursor-not-allowed disabled:opacity-60"
+                className="rounded-2xl bg-sky-500 px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-sky-400 disabled:cursor-not-allowed disabled:opacity-50"
               >
                 공유 시작
               </button>
@@ -949,13 +1049,38 @@ function Classroom() {
                 type="button"
                 onClick={() => void handleStopShare()}
                 disabled={!isBoardShared}
-                className="rounded-3xl bg-slate-200 px-5 py-3 text-slate-900 transition hover:bg-slate-300 disabled:cursor-not-allowed disabled:opacity-60"
+                className="rounded-2xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-semibold text-slate-600 shadow-sm transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
               >
                 공유 중지
               </button>
+              <button
+                type="button"
+                onClick={toggleSpeechRecognition}
+                disabled={!isClassActive}
+                className={`rounded-2xl px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition disabled:cursor-not-allowed disabled:opacity-50 ${
+                  speechActive
+                    ? 'bg-rose-500 hover:bg-rose-400'
+                    : 'bg-violet-600 hover:bg-violet-500'
+                }`}
+              >
+                {speechActive ? '🎤 끄기' : '🎤 켜기'}
+              </button>
+              <button
+                type="button"
+                onClick={() => void handleDeleteSession()}
+                disabled={isClassActive}
+                className="rounded-2xl border border-rose-200 bg-rose-50 px-4 py-2.5 text-sm font-semibold text-rose-700 transition hover:bg-rose-100 disabled:cursor-not-allowed disabled:opacity-40"
+                title="수업이 진행 중일 때는 삭제할 수 없습니다."
+              >
+                수업 삭제
+              </button>
             </div>
           ) : (
-            <div className="mb-6 rounded-3xl border border-slate-200 bg-slate-50 p-4 text-slate-700">
+            <div className={`mb-5 rounded-2xl border p-4 text-sm ${
+              isClassActive
+                ? 'border-sky-100 bg-sky-50 text-sky-800'
+                : 'border-slate-100 bg-slate-50 text-slate-500'
+            }`}>
               {!isClassActive
                 ? '교사가 수업 시작을 누를 때까지 대기 중입니다.'
                 : isBoardShared
@@ -964,14 +1089,14 @@ function Classroom() {
             </div>
           )}
 
-          <div className="rounded-[28px] border border-slate-200 bg-slate-100 p-4">
+          <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
             <div className="flex flex-wrap items-center justify-between gap-3">
               <div>
-                <h2 className="text-lg font-semibold text-slate-900">공용 전자칠판</h2>
-                <p className="mt-1 text-sm text-slate-600">
+                <h2 className="font-bold text-slate-900">공용 전자칠판</h2>
+                <p className="mt-1 text-xs text-slate-400">
                   {isTeacher
                     ? '수업 시작 후 공유를 켜면 학생 화면에도 이 전자칠판이 그대로 보입니다.'
-                    : '교사가 공유 중인 전자칠판이 여기 표시됩니다. 학생은 아래 개인 필기용 전자칠판에 따로 메모할 수 있습니다.'}
+                    : '교사가 공유 중인 전자칠판이 여기 표시됩니다.'}
                 </p>
               </div>
             </div>
@@ -986,47 +1111,109 @@ function Classroom() {
                 canDrawSharedBoard ? 'cursor-crosshair' : 'cursor-not-allowed opacity-70'
               }`}
             />
+
+            {isTeacher && (
+              <div className="mt-4 flex flex-wrap items-center gap-3">
+                <div className="flex items-center gap-1.5">
+                  {[
+                    { color: '#0f172a', ring: 'ring-slate-900' },
+                    { color: '#dc2626', ring: 'ring-red-600' },
+                    { color: '#2563eb', ring: 'ring-blue-600' },
+                    { color: '#16a34a', ring: 'ring-green-600' },
+                    { color: '#7c3aed', ring: 'ring-violet-700' },
+                    { color: '#ea580c', ring: 'ring-orange-600' },
+                    { color: '#ca8a04', ring: 'ring-yellow-600' },
+                  ].map(({ color, ring }) => (
+                    <button
+                      key={color}
+                      type="button"
+                      onClick={() => { setPenColor(color); setIsEraser(false) }}
+                      style={{ backgroundColor: color }}
+                      className={`h-7 w-7 rounded-full border-2 transition ${
+                        !isEraser && penColor === color
+                          ? `border-transparent ring-2 ring-offset-1 ${ring}`
+                          : 'border-white shadow-sm'
+                      }`}
+                    />
+                  ))}
+                </div>
+                <div className="h-5 w-px bg-slate-200" />
+                <div className="flex items-center gap-1">
+                  {([2, 4, 8] as const).map((size) => (
+                    <button
+                      key={size}
+                      type="button"
+                      onClick={() => setPenSize(size)}
+                      className={`rounded-lg px-2.5 py-1 text-xs font-semibold transition ${
+                        penSize === size
+                          ? 'bg-slate-800 text-white'
+                          : 'bg-white text-slate-600 hover:bg-slate-100'
+                      }`}
+                    >
+                      {size === 2 ? 'S' : size === 4 ? 'M' : 'L'}
+                    </button>
+                  ))}
+                </div>
+                <div className="h-5 w-px bg-slate-200" />
+                <button
+                  type="button"
+                  onClick={() => setIsEraser(!isEraser)}
+                  className={`rounded-lg px-3 py-1 text-xs font-semibold transition ${
+                    isEraser ? 'bg-orange-500 text-white' : 'bg-white text-slate-600 hover:bg-slate-100'
+                  }`}
+                >
+                  지우개
+                </button>
+                <button
+                  type="button"
+                  onClick={() => void handleClearBoard()}
+                  className="rounded-lg border border-rose-200 bg-rose-50 px-3 py-1 text-xs font-semibold text-rose-700 transition hover:bg-rose-100"
+                >
+                  전체 지우기
+                </button>
+              </div>
+            )}
           </div>
 
           {!isTeacher && (
-            <div className="mt-6 space-y-4">
-              <div className="rounded-3xl border border-slate-200 bg-slate-50 p-4">
+            <div className="mt-5 space-y-4">
+              <div className="rounded-2xl border border-sky-100 bg-sky-50/40 p-4">
                 <div className="flex flex-wrap items-center justify-between gap-3">
                   <div>
-                    <h2 className="text-lg font-semibold text-slate-900">교사 말 텍스트</h2>
-                    <p className="mt-1 text-sm text-slate-600">
+                    <h2 className="font-bold text-slate-900">교사 말 텍스트</h2>
+                    <p className="mt-0.5 text-xs text-slate-400">
                       교사가 마이크로 말한 내용이 텍스트로 누적됩니다.
                     </p>
                   </div>
                   <button
                     type="button"
                     onClick={playTeacherVoice}
-                    className="rounded-3xl bg-slate-200 px-5 py-3 text-slate-900 transition hover:bg-slate-300"
+                    className="rounded-xl border border-slate-200 bg-white px-4 py-2 text-xs font-medium text-slate-600 shadow-sm transition hover:bg-slate-50"
                   >
-                    저장된 음성 듣기
+                    음성 듣기
                   </button>
                 </div>
 
-                <p className="mt-4 min-h-[120px] whitespace-pre-wrap rounded-3xl bg-white p-4 text-slate-700 shadow-sm">
+                <p className="mt-3 min-h-[100px] whitespace-pre-wrap rounded-xl bg-white p-3 text-sm text-slate-600 shadow-sm">
                   {speechText || '저장된 교사 음성 텍스트가 아직 없습니다.'}
                 </p>
               </div>
 
-              <div className="rounded-3xl border border-slate-200 bg-slate-50 p-4">
+              <div className="rounded-2xl border border-indigo-100 bg-indigo-50/30 p-4">
                 <div className="flex flex-wrap items-center justify-between gap-3">
                   <div>
-                    <h2 className="text-lg font-semibold text-slate-900">내 필기용 전자칠판</h2>
-                    <p className="mt-1 text-sm text-slate-600">
-                      이 칠판은 학생 개인 메모용입니다. 공유 칠판과 별개로 자유롭게 필기할 수 있습니다.
+                    <h2 className="font-bold text-slate-900">내 필기용 전자칠판</h2>
+                    <p className="mt-0.5 text-xs text-slate-400">
+                      공유 칠판과 별개로 자유롭게 필기할 수 있습니다.
                     </p>
                   </div>
                   <button
                     type="button"
                     onClick={clearStudentBoardCanvas}
                     disabled={!canUseStudentBoard}
-                    className="rounded-3xl bg-slate-200 px-5 py-3 text-slate-900 transition hover:bg-slate-300 disabled:cursor-not-allowed disabled:opacity-60"
+                    className="rounded-xl border border-slate-200 bg-white px-4 py-2 text-xs font-medium text-slate-600 shadow-sm transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
                   >
-                    내 칠판 지우기
+                    칠판 지우기
                   </button>
                 </div>
 
@@ -1036,16 +1223,71 @@ function Classroom() {
                   onPointerMove={moveStudentDrawing}
                   onPointerUp={endStudentDrawing}
                   onPointerLeave={endStudentDrawing}
-                  className={`mt-4 h-auto w-full touch-none rounded-[24px] border border-slate-300 bg-white shadow-inner ${
+                  className={`mt-3 h-auto w-full touch-none rounded-xl border border-slate-200 bg-white shadow-inner ${
                     canUseStudentBoard ? 'cursor-crosshair' : 'cursor-not-allowed opacity-70'
                   }`}
                 />
+
+                {canUseStudentBoard && (
+                  <div className="mt-3 flex flex-wrap items-center gap-3">
+                    <div className="flex items-center gap-1.5">
+                      {[
+                        { color: '#0f172a', ring: 'ring-slate-900' },
+                        { color: '#dc2626', ring: 'ring-red-600' },
+                        { color: '#2563eb', ring: 'ring-blue-600' },
+                        { color: '#16a34a', ring: 'ring-green-600' },
+                        { color: '#7c3aed', ring: 'ring-violet-700' },
+                        { color: '#ea580c', ring: 'ring-orange-600' },
+                        { color: '#ca8a04', ring: 'ring-yellow-600' },
+                      ].map(({ color, ring }) => (
+                        <button
+                          key={color}
+                          type="button"
+                          onClick={() => { setStudentPenColor(color); setStudentIsEraser(false) }}
+                          style={{ backgroundColor: color }}
+                          className={`h-7 w-7 rounded-full border-2 transition ${
+                            !studentIsEraser && studentPenColor === color
+                              ? `border-transparent ring-2 ring-offset-1 ${ring}`
+                              : 'border-white shadow-sm'
+                          }`}
+                        />
+                      ))}
+                    </div>
+                    <div className="h-5 w-px bg-slate-200" />
+                    <div className="flex items-center gap-1">
+                      {([2, 4, 8] as const).map((size) => (
+                        <button
+                          key={size}
+                          type="button"
+                          onClick={() => setStudentPenSize(size)}
+                          className={`rounded-lg px-2.5 py-1 text-xs font-semibold transition ${
+                            studentPenSize === size
+                              ? 'bg-slate-800 text-white'
+                              : 'bg-white text-slate-600 hover:bg-slate-100'
+                          }`}
+                        >
+                          {size === 2 ? 'S' : size === 4 ? 'M' : 'L'}
+                        </button>
+                      ))}
+                    </div>
+                    <div className="h-5 w-px bg-slate-200" />
+                    <button
+                      type="button"
+                      onClick={() => setStudentIsEraser(!studentIsEraser)}
+                      className={`rounded-lg px-3 py-1 text-xs font-semibold transition ${
+                        studentIsEraser ? 'bg-orange-500 text-white' : 'bg-white text-slate-600 hover:bg-slate-100'
+                      }`}
+                    >
+                      지우개
+                    </button>
+                  </div>
+                )}
               </div>
 
-              <div className="rounded-3xl border border-slate-200 bg-slate-50 p-4">
-                <h2 className="text-lg font-semibold text-slate-900">내 필기 정리</h2>
+              <div className="rounded-2xl border border-slate-100 bg-slate-50/60 p-4">
+                <h2 className="font-bold text-slate-900">내 필기 정리</h2>
                 <textarea
-                  className="mt-3 h-52 w-full rounded-3xl border border-slate-200 bg-white p-4 text-slate-900 shadow-sm focus:border-slate-400 focus:outline-none"
+                  className="mt-3 h-44 w-full rounded-xl border border-slate-200 bg-white p-4 text-slate-900 shadow-sm focus:border-indigo-400 focus:outline-none focus:ring-1 focus:ring-indigo-100"
                   placeholder="학생 필기를 자유롭게 입력하세요"
                   value={studentNote}
                   onChange={(event) => setStudentNote(event.target.value)}
@@ -1054,76 +1296,32 @@ function Classroom() {
                   type="button"
                   onClick={() => void handleAnalyzeFeedback()}
                   disabled={!isBoardShared}
-                  className="mt-4 rounded-3xl bg-slate-900 px-6 py-3 text-white transition hover:bg-slate-700 disabled:cursor-not-allowed disabled:opacity-60"
+                  className="mt-3 rounded-xl bg-indigo-600 px-5 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-indigo-500 disabled:cursor-not-allowed disabled:opacity-60"
                 >
                   교사 필기와 비교하기
                 </button>
               </div>
 
-              <div className="rounded-3xl border border-slate-200 bg-slate-50 p-4">
-                <div className="flex flex-wrap items-center justify-between gap-3">
-                  <div>
-                    <h2 className="text-lg font-semibold text-slate-900">교사 음성 기록 보조 입력</h2>
-                    <p className="mt-1 text-sm text-slate-600">
-                      교사 설명을 추가로 텍스트로 남기거나 요약을 만들 때 사용합니다.
-                    </p>
-                  </div>
-                </div>
-
-                <textarea
-                  className="mt-4 h-32 w-full rounded-3xl border border-slate-200 bg-white p-4 text-slate-900 shadow-sm focus:border-slate-400 focus:outline-none"
-                  placeholder="교사 설명을 직접 기록해둘 수도 있습니다."
-                  value={manualSpeechText}
-                  onChange={(event) => setManualSpeechText(event.target.value)}
-                  disabled={!isClassActive}
-                />
-                <div className="mt-4 flex flex-wrap gap-3">
-                  <button
-                    type="button"
-                    onClick={() => void handleSaveManualSpeech()}
-                    disabled={!isClassActive}
-                    className="rounded-3xl bg-emerald-600 px-6 py-3 text-white transition hover:bg-emerald-500 disabled:cursor-not-allowed disabled:opacity-60"
-                  >
-                    음성 텍스트 저장
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => void generateSummary()}
-                    disabled={!isClassActive}
-                    className="rounded-3xl bg-sky-600 px-6 py-3 text-white transition hover:bg-sky-500 disabled:cursor-not-allowed disabled:opacity-60"
-                  >
-                    수업 요약 생성
-                  </button>
-                  <button
-                    type="button"
-                    onClick={toggleSpeechRecognition}
-                    disabled={!isClassActive}
-                    className="rounded-3xl bg-slate-900 px-5 py-3 text-white transition hover:bg-slate-700 disabled:cursor-not-allowed disabled:opacity-60"
-                  >
-                    {speechActive ? '음성 인식 중지' : '음성 인식 시작'}
-                  </button>
-                </div>
-              </div>
-
               {(feedback.missing || feedback.suggestions || feedback.positives) && (
-                <div className="space-y-4 rounded-3xl border border-slate-200 bg-slate-50 p-4">
-                  <h2 className="text-lg font-semibold text-slate-900">피드백 결과</h2>
-                  <div>
-                    <h3 className="font-semibold text-slate-800">누락 항목</h3>
-                    <p className="mt-2 whitespace-pre-wrap text-slate-700">{feedback.missing}</p>
+                <div className="rounded-2xl border border-slate-100 bg-white p-4 shadow-sm">
+                  <h2 className="font-bold text-slate-900">피드백 결과</h2>
+                  <div className="mt-3 space-y-3">
+                    <div className="rounded-xl border border-rose-100 bg-rose-50/60 p-3">
+                      <h3 className="text-sm font-semibold text-rose-700">누락 항목</h3>
+                      <p className="mt-1.5 text-sm whitespace-pre-wrap text-slate-700">{feedback.missing}</p>
+                    </div>
+                    <div className="rounded-xl border border-amber-100 bg-amber-50/60 p-3">
+                      <h3 className="text-sm font-semibold text-amber-700">보완 제안</h3>
+                      <p className="mt-1.5 text-sm whitespace-pre-wrap text-slate-700">{feedback.suggestions}</p>
+                    </div>
+                    <div className="rounded-xl border border-emerald-100 bg-emerald-50/60 p-3">
+                      <h3 className="text-sm font-semibold text-emerald-700">잘한 점</h3>
+                      <p className="mt-1.5 text-sm whitespace-pre-wrap text-slate-700">{feedback.positives}</p>
+                    </div>
                   </div>
-                  <div>
-                    <h3 className="font-semibold text-slate-800">보완 제안</h3>
-                    <p className="mt-2 whitespace-pre-wrap text-slate-700">{feedback.suggestions}</p>
-                  </div>
-                  <div>
-                    <h3 className="font-semibold text-slate-800">잘한 점</h3>
-                    <p className="mt-2 whitespace-pre-wrap text-slate-700">{feedback.positives}</p>
-                  </div>
-                  <div>
-                    <label className="text-sm font-medium text-slate-700">추가 질문</label>
+                  <div className="mt-4">
                     <textarea
-                      className="mt-3 h-32 w-full rounded-3xl border border-slate-200 bg-white p-4 text-slate-900 shadow-sm focus:border-slate-400 focus:outline-none"
+                      className="h-28 w-full rounded-xl border border-slate-200 bg-slate-50 p-3 text-sm text-slate-900 focus:border-sky-400 focus:outline-none"
                       placeholder="이 내용을 바탕으로 추가로 궁금한 점을 물어보세요."
                       value={followupQuestion}
                       onChange={(event) => setFollowupQuestion(event.target.value)}
@@ -1131,14 +1329,14 @@ function Classroom() {
                     <button
                       type="button"
                       onClick={() => void handleAskFollowup()}
-                      className="mt-4 rounded-3xl bg-sky-600 px-6 py-3 text-white transition hover:bg-sky-500"
+                      className="mt-2 rounded-xl bg-sky-500 px-5 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-sky-400"
                     >
                       후속 질문
                     </button>
                     {followupAnswer && (
-                      <div className="mt-4 rounded-3xl bg-white p-4 shadow-sm">
-                        <h3 className="font-semibold text-slate-800">답변</h3>
-                        <p className="mt-3 whitespace-pre-wrap text-slate-700">{followupAnswer}</p>
+                      <div className="mt-3 rounded-xl border border-sky-100 bg-sky-50/60 p-3">
+                        <h3 className="text-sm font-semibold text-sky-800">답변</h3>
+                        <p className="mt-2 text-sm whitespace-pre-wrap text-slate-700">{followupAnswer}</p>
                       </div>
                     )}
                   </div>
@@ -1149,35 +1347,226 @@ function Classroom() {
         </section>
 
         {!isTeacher && (
-          <aside className="rounded-3xl bg-white p-6 shadow-sm">
-            <div className="space-y-6">
-              <div className="rounded-3xl border border-slate-200 bg-slate-50 p-4">
-                <h2 className="text-lg font-semibold text-slate-900">최신 OCR 텍스트</h2>
-                <p className="mt-3 min-h-[160px] whitespace-pre-wrap text-slate-700">{latestBoardText}</p>
+          <aside className="rounded-3xl bg-white p-5 shadow-sm ring-1 ring-slate-100">
+            <div className="space-y-4">
+              <div className="rounded-2xl border border-slate-100 bg-slate-50/60 p-4">
+                <h2 className="text-sm font-bold text-slate-900">최신 OCR 텍스트</h2>
+                <p className="mt-2 min-h-[120px] whitespace-pre-wrap text-sm text-slate-600">{latestBoardText}</p>
               </div>
 
-              <div className="rounded-3xl border border-slate-200 bg-slate-50 p-4">
-                <h2 className="text-lg font-semibold text-slate-900">저장된 음성 기록</h2>
-                <p className="mt-3 min-h-[160px] whitespace-pre-wrap text-slate-700">{savedSpeechText}</p>
+              <div className="rounded-2xl border border-slate-100 bg-slate-50/60 p-4">
+                <h2 className="text-sm font-bold text-slate-900">저장된 음성 기록</h2>
+                <p className="mt-2 min-h-[120px] whitespace-pre-wrap text-sm text-slate-600">{savedSpeechText}</p>
               </div>
 
-              <div className="rounded-3xl border border-slate-200 bg-slate-50 p-4">
-                <h2 className="text-lg font-semibold text-slate-900">요약 노트</h2>
-                <p className="mt-3 min-h-[160px] whitespace-pre-wrap text-slate-700">
+              <div className="rounded-2xl border border-slate-100 bg-slate-50/60 p-4">
+                <h2 className="text-sm font-bold text-slate-900">요약 노트</h2>
+                <p className="mt-2 min-h-[120px] whitespace-pre-wrap text-sm text-slate-600">
                   {sessionInfo?.generated_note || '수업 요약이 아직 생성되지 않았습니다.'}
                 </p>
               </div>
 
-              <div className="rounded-3xl border border-slate-200 bg-slate-50 p-4">
-                <h2 className="text-lg font-semibold text-slate-900">수업 상태</h2>
-                <p className="mt-3 whitespace-pre-wrap text-slate-700">
-                  {status || '공유 중인 전자칠판과 교사 기록이 이 화면에 누적됩니다.'}
-                </p>
-              </div>
+              {status && (
+                <div className="rounded-2xl border border-amber-100 bg-amber-50/60 p-3 text-sm text-amber-800">
+                  {status}
+                </div>
+              )}
+
+              {/* 지난 수업 섹션 히스토리 */}
+              {(sessionInfo?.sections?.length ?? 0) > 0 && (
+                <div className="rounded-2xl border border-indigo-100 bg-indigo-50/30 p-4">
+                  <h2 className="text-sm font-bold text-slate-900">지난 수업 기록</h2>
+                  <p className="mt-0.5 text-xs text-slate-400">수업이 종료될 때마다 섹션이 생성됩니다.</p>
+                  <div className="mt-3 space-y-2">
+                    {[...(sessionInfo?.sections ?? [])].reverse().map((section) => {
+                      const start = new Date(section.started_at)
+                      const end = new Date(section.ended_at)
+                      const dateStr = start.toLocaleDateString('ko-KR', { month: 'long', day: 'numeric' })
+                      const timeStr = `${start.toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit' })} ~ ${end.toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit' })}`
+                      const isExpanded = expandedSectionIndex === section.index
+                      const summary = sectionSummaries[section.index]
+                      const isLoadingSummary = loadingSummaryIndex === section.index
+
+                      return (
+                        <div key={section.index} className="rounded-xl border border-white bg-white p-3 shadow-sm">
+                          <div className="flex flex-wrap items-start justify-between gap-2">
+                            <div>
+                              <p className="text-sm font-semibold text-slate-800">{dateStr}</p>
+                              <p className="text-xs text-slate-400">{timeStr}</p>
+                              <p className="mt-0.5 text-xs text-slate-400">
+                                칠판 {section.ocr_count}건 · 음성 {section.stt_count}건
+                              </p>
+                            </div>
+                            <div className="flex flex-wrap gap-1.5">
+                              <button
+                                type="button"
+                                onClick={() => void handleGenerateSectionSummary(section)}
+                                disabled={isLoadingSummary}
+                                className="rounded-lg bg-sky-100 px-2.5 py-1 text-xs font-semibold text-sky-700 transition hover:bg-sky-200 disabled:opacity-60"
+                              >
+                                {isLoadingSummary ? '요약 중...' : section.has_summary || summary ? 'AI 요약' : 'AI 요약'}
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => handleOpenSectionFeedback(section.index)}
+                                className="rounded-lg bg-violet-100 px-2.5 py-1 text-xs font-semibold text-violet-700 transition hover:bg-violet-200"
+                              >
+                                필기 비교
+                              </button>
+                            </div>
+                          </div>
+                          {isExpanded && summary && (
+                            <div className="mt-2 rounded-lg bg-slate-50 p-2.5">
+                              <p className="whitespace-pre-wrap text-xs text-slate-600">{summary}</p>
+                              <button
+                                type="button"
+                                onClick={() => setExpandedSectionIndex(null)}
+                                className="mt-1.5 text-xs text-slate-400 hover:text-slate-600"
+                              >
+                                접기
+                              </button>
+                            </div>
+                          )}
+                        </div>
+                      )
+                    })}
+                  </div>
+                </div>
+              )}
             </div>
           </aside>
         )}
       </div>
+
+      {/* 수업 종료 알림 모달 */}
+      {showEndModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4 backdrop-blur-sm">
+          <div className="w-full max-w-sm rounded-3xl bg-white p-8 shadow-2xl ring-1 ring-slate-100">
+            <div className="mb-1 flex h-12 w-12 items-center justify-center rounded-2xl bg-indigo-100 text-2xl">
+              🎓
+            </div>
+            <h2 className="mt-4 text-xl font-bold text-slate-900">수업이 종료되었습니다</h2>
+            <p className="mt-2 text-sm text-slate-500">
+              오늘 수업에 대한 AI 피드백을 받으시겠습니까?<br />
+              필기 사진을 추가로 업로드하면 더 정확한 분석이 가능합니다.
+            </p>
+            <div className="mt-6 flex gap-3">
+              <button
+                type="button"
+                onClick={() => { setShowEndModal(false); navigate('/') }}
+                className="flex-1 rounded-2xl border border-slate-200 bg-white px-5 py-3 text-sm font-medium text-slate-600 transition hover:bg-slate-50"
+              >
+                나가기
+              </button>
+              <button
+                type="button"
+                onClick={() => { setShowEndModal(false); setShowFeedbackModal(true) }}
+                className="flex-1 rounded-2xl bg-indigo-600 px-5 py-3 text-sm font-semibold text-white shadow-sm transition hover:bg-indigo-500"
+              >
+                AI 피드백 받기
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 피드백 제출 모달 */}
+      {showFeedbackModal && (
+        <div className="fixed inset-0 z-50 overflow-y-auto bg-black/40 p-4 backdrop-blur-sm">
+          <div className="mx-auto my-8 w-full max-w-2xl rounded-3xl bg-white p-8 shadow-2xl ring-1 ring-slate-100">
+            <div className="flex items-center justify-between">
+              <h2 className="text-xl font-bold text-slate-900">
+                AI 피드백 받기
+                {feedbackModalSectionIndex !== null && (
+                  <span className="ml-2 text-sm font-normal text-slate-400">
+                    섹션 {feedbackModalSectionIndex + 1}
+                  </span>
+                )}
+              </h2>
+              <button
+                type="button"
+                onClick={() => { setShowFeedbackModal(false); setFeedbackModalResult(null) }}
+                className="rounded-xl p-2 text-slate-400 transition hover:bg-slate-100 hover:text-slate-700"
+              >
+                ✕
+              </button>
+            </div>
+
+            {!feedbackModalResult ? (
+              <div className="mt-6 space-y-5">
+                <div>
+                  <label className="text-sm font-semibold text-slate-700">내 필기 텍스트</label>
+                  <textarea
+                    className="mt-2 h-40 w-full rounded-2xl border border-slate-200 bg-slate-50 p-4 text-slate-900 focus:border-indigo-400 focus:outline-none focus:ring-1 focus:ring-indigo-100"
+                    placeholder="수업 중 적었던 필기 내용을 입력하거나 수정하세요."
+                    value={feedbackModalNote}
+                    onChange={(e) => setFeedbackModalNote(e.target.value)}
+                  />
+                </div>
+
+                <div>
+                  <label className="text-sm font-semibold text-slate-700">필기 사진 (선택)</label>
+                  <p className="mt-1 text-xs text-slate-400">노트, 교재 메모 등 사진을 업로드하면 AI가 내용을 인식해 분석합니다.</p>
+                  <label className="mt-2 flex cursor-pointer items-center gap-3 rounded-2xl border-2 border-dashed border-indigo-200 bg-indigo-50/30 p-4 transition hover:border-indigo-400 hover:bg-indigo-50/60">
+                    <span className="rounded-xl bg-indigo-100 px-3 py-1.5 text-sm font-semibold text-indigo-700">
+                      사진 선택
+                    </span>
+                    <span className="text-sm text-slate-400">
+                      {feedbackModalPhotoName || '파일을 선택하세요 (jpg, png 등)'}
+                    </span>
+                    <input
+                      type="file"
+                      accept="image/*"
+                      className="hidden"
+                      onChange={handleFeedbackPhotoChange}
+                    />
+                  </label>
+                </div>
+
+                <button
+                  type="button"
+                  onClick={() => void handleSubmitModalFeedback()}
+                  disabled={isSubmittingFeedback}
+                  className="w-full rounded-2xl bg-indigo-600 px-6 py-3 font-semibold text-white shadow-sm transition hover:bg-indigo-500 disabled:opacity-60"
+                >
+                  {isSubmittingFeedback ? 'AI 분석 중...' : '피드백 받기'}
+                </button>
+              </div>
+            ) : (
+              <div className="mt-6 space-y-4">
+                <div className="rounded-2xl border border-rose-100 bg-rose-50/60 p-4">
+                  <h3 className="font-semibold text-rose-700">누락 항목</h3>
+                  <p className="mt-2 whitespace-pre-wrap text-slate-700">{feedbackModalResult.missing}</p>
+                </div>
+                <div className="rounded-2xl border border-amber-100 bg-amber-50/60 p-4">
+                  <h3 className="font-semibold text-amber-700">보완 제안</h3>
+                  <p className="mt-2 whitespace-pre-wrap text-slate-700">{feedbackModalResult.suggestions}</p>
+                </div>
+                <div className="rounded-2xl border border-emerald-100 bg-emerald-50/60 p-4">
+                  <h3 className="font-semibold text-emerald-700">잘한 점</h3>
+                  <p className="mt-2 whitespace-pre-wrap text-slate-700">{feedbackModalResult.positives}</p>
+                </div>
+                <div className="flex gap-3">
+                  <button
+                    type="button"
+                    onClick={() => setFeedbackModalResult(null)}
+                    className="flex-1 rounded-2xl border border-slate-200 bg-white px-5 py-3 text-sm font-medium text-slate-600 transition hover:bg-slate-50"
+                  >
+                    다시 제출
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => { setShowFeedbackModal(false); setFeedbackModalResult(null) }}
+                    className="flex-1 rounded-2xl bg-indigo-600 px-5 py-3 text-sm font-semibold text-white shadow-sm transition hover:bg-indigo-500"
+                  >
+                    닫기
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
     </main>
   )
 }

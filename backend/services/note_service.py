@@ -7,6 +7,7 @@ from models.session_models import (
     NoteApproveResponse,
     NoteShareRequest,
     NoteShareResponse,
+    SectionSummaryRequest,
 )
 from services.gemini_service import generate_text, translate_gemini_error
 from services.session_service import get_session, save_sessions
@@ -54,6 +55,40 @@ def approve_note_for_session(request: NoteApproveRequest) -> NoteApproveResponse
     session.approved_note = request.note
     save_sessions()
     return NoteApproveResponse(approved=True)
+
+
+def generate_section_summary(request: SectionSummaryRequest) -> NoteGenerateResponse:
+    session = get_session(request.session_id)
+    if session is None:
+        raise HTTPException(status_code=404, detail='세션을 찾을 수 없습니다.')
+
+    sections = session.sections
+    if request.section_index < 0 or request.section_index >= len(sections):
+        raise HTTPException(status_code=404, detail='해당 수업 섹션을 찾을 수 없습니다.')
+
+    section = sections[request.section_index]
+    board_text = '\n'.join(section.ocr_history).strip() or '칠판 기록 없음'
+    speech_text = '\n'.join(section.stt_history).strip() or '음성 기록 없음'
+
+    prompt = (
+        f'당신은 교육 전문가입니다. 아래는 수업의 칠판 판서 내용과 교사 음성 내용입니다.\n'
+        f'수업 제목: {session.title}\n'
+        f'학습 목표: {session.goals}\n\n'
+        f'칠판 판서 내용:\n{board_text}\n\n'
+        f'교사 음성 내용:\n{speech_text}\n\n'
+        f'이 수업 내용을 학생이 이해하기 쉽게 핵심 중심으로 구조화된 요약 노트를 생성해주세요.\n'
+        f'형식: 수업 제목 / 학습 목표 / 핵심 개념 / 세부 내용 / 정리'
+    )
+
+    try:
+        note_text = generate_text(prompt)
+    except Exception as exc:
+        status_code, message = translate_gemini_error(exc)
+        raise HTTPException(status_code=status_code, detail=message) from exc
+
+    section.generated_note = note_text
+    save_sessions()
+    return NoteGenerateResponse(note=note_text)
 
 
 def share_note_for_session(request: NoteShareRequest) -> NoteShareResponse:

@@ -56,6 +56,12 @@ export function setCurrentSession(sessionId: string, title: string, role: UserRo
   addJoinedSession({ session_id: sessionId, title, role })
 }
 
+export function removeJoinedSession(sessionId: string) {
+  if (typeof window === 'undefined') return
+  const sessions = getJoinedSessions().filter((item) => item.session_id !== sessionId)
+  localStorage.setItem(JOINED_SESSIONS_KEY, JSON.stringify(sessions))
+}
+
 export function clearSession() {
   if (typeof window === 'undefined') return
   localStorage.removeItem(SESSION_ID_KEY)

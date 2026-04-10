@@ -5,9 +5,10 @@ from models.session_models import (
     FeedbackAnalyzeResponse,
     FeedbackFollowupRequest,
     FeedbackFollowupResponse,
+    FeedbackWithImageRequest,
 )
 from services.feedback_utils import parse_feedback_sections
-from services.gemini_service import generate_text, translate_gemini_error
+from services.gemini_service import analyze_image, generate_text, translate_gemini_error
 from services.session_service import get_session
 
 
@@ -47,6 +48,75 @@ def analyze_feedback(request: FeedbackAnalyzeRequest) -> FeedbackAnalyzeResponse
         f'{reference_note}\n\n'
         '학생 필기:\n'
         f'{request.student_note}\n\n'
+        '결과를 다음 세 부분으로 구분해서 작성해주세요: 누락 항목 / 보완 제안 / 잘한 점.'
+    )
+
+    try:
+        feedback_text = generate_text(prompt)
+    except Exception as exc:
+        status_code, message = translate_gemini_error(exc)
+        raise HTTPException(status_code=status_code, detail=message) from exc
+    missing, suggestions, positives = parse_feedback_sections(feedback_text)
+    return FeedbackAnalyzeResponse(
+        missing=missing,
+        suggestions=suggestions,
+        positives=positives,
+        raw_feedback=feedback_text,
+    )
+
+
+def _build_section_reference(session, section_index: int) -> str | None:
+    if section_index < 0 or section_index >= len(session.sections):
+        return None
+    section = session.sections[section_index]
+    if section.generated_note:
+        return section.generated_note
+    board_text = '\n'.join(section.ocr_history).strip()
+    speech_text = '\n'.join(section.stt_history).strip()
+    if not board_text and not speech_text:
+        return None
+    return (
+        '교사 전자칠판 기록:\n'
+        f'{board_text or "전자칠판 기록이 없습니다."}\n\n'
+        '교사 음성 기록:\n'
+        f'{speech_text or "음성 기록이 없습니다."}'
+    )
+
+
+def analyze_feedback_with_image(request: FeedbackWithImageRequest) -> FeedbackAnalyzeResponse:
+    session = get_session(request.session_id)
+    if session is None:
+        raise HTTPException(status_code=404, detail='세션을 찾을 수 없습니다.')
+
+    if request.section_index is not None:
+        reference_note = _build_section_reference(session, request.section_index)
+    else:
+        reference_note = _build_reference_note(session)
+
+    if not reference_note:
+        raise HTTPException(status_code=400, detail='교사 필기나 음성 기록이 아직 없습니다.')
+
+    combined_student = request.student_note
+    if request.image_base64:
+        try:
+            image_text = analyze_image(
+                request.image_base64,
+                '이 이미지에서 학생의 필기 내용을 모두 추출해주세요. 텍스트, 수식, 도형 설명을 포함해서 정확히 추출해주세요. 한국어로 답변해주세요.',
+            )
+            if image_text.strip():
+                prefix = f'{request.student_note}\n\n' if request.student_note.strip() else ''
+                combined_student = f'{prefix}[사진 필기 분석]\n{image_text.strip()}'
+        except Exception:
+            pass
+
+    prompt = (
+        '아래는 교사의 기준 필기 노트와 학생이 작성한 필기입니다. '
+        '학생 필기에서 누락된 핵심 개념, 잘못 이해한 내용, 교육 목적에서 벗어난 부분을 분석하고 '
+        '구체적인 보완 방법과 함께 친절하게 피드백해주세요.\n\n'
+        '교사 기준 노트:\n'
+        f'{reference_note}\n\n'
+        '학생 필기:\n'
+        f'{combined_student or "(필기 없음)"}\n\n'
         '결과를 다음 세 부분으로 구분해서 작성해주세요: 누락 항목 / 보완 제안 / 잘한 점.'
     )
 

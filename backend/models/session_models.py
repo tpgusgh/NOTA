@@ -2,6 +2,43 @@ from pydantic import BaseModel, Field
 from typing import List, Optional
 
 
+class SectionData(BaseModel):
+    index: int
+    started_at: str
+    ended_at: str
+    name: Optional[str] = None
+    ocr_history: List[str] = Field(default_factory=list)
+    stt_history: List[str] = Field(default_factory=list)
+    board_snapshot: Optional[str] = None
+    generated_note: Optional[str] = None
+
+
+class SectionListItem(BaseModel):
+    index: int
+    started_at: str
+    ended_at: str
+    name: Optional[str] = None
+    has_summary: bool
+    ocr_count: int
+    stt_count: int
+
+
+class StopClassRequest(BaseModel):
+    section_name: Optional[str] = None
+
+
+class SectionSummaryRequest(BaseModel):
+    session_id: str
+    section_index: int
+
+
+class FeedbackWithImageRequest(BaseModel):
+    session_id: str
+    student_note: str
+    image_base64: Optional[str] = None
+    section_index: Optional[int] = None
+
+
 class SessionCreateRequest(BaseModel):
     title: str
     goals: str
@@ -40,6 +77,7 @@ class SessionInfoResponse(BaseModel):
     generated_note: Optional[str] = None
     approved_note: Optional[str] = None
     public_note: Optional[str] = None
+    sections: List[SectionListItem] = Field(default_factory=list)
 
 class OcrAnalyzeRequest(BaseModel):
     image_base64: str
@@ -157,3 +195,6 @@ class SessionData(BaseModel):
     generated_note: Optional[str] = None
     approved_note: Optional[str] = None
     public_note: Optional[str] = None
+    sections: List[SectionData] = Field(default_factory=list)
+    current_section_ocr_start: int = 0
+    current_section_stt_start: int = 0
