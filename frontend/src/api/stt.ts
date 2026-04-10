@@ -19,7 +19,8 @@ export async function saveStt(request: SttSaveRequest): Promise<SttSaveResponse>
   })
 
   if (!response.ok) {
-    throw new Error('STT 저장에 실패했습니다.')
+    const error = await response.text()
+    throw new Error(error || 'STT 저장에 실패했습니다.')
   }
 
   return response.json()

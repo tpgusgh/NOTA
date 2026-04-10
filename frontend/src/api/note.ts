@@ -39,7 +39,8 @@ export async function generateNote(request: NoteGenerateRequest): Promise<NoteGe
   })
 
   if (!response.ok) {
-    throw new Error('노트 생성에 실패했습니다.')
+    const error = await response.text()
+    throw new Error(error || '노트 생성에 실패했습니다.')
   }
 
   return response.json()
@@ -55,7 +56,8 @@ export async function approveNote(request: NoteApproveRequest): Promise<NoteAppr
   })
 
   if (!response.ok) {
-    throw new Error('노트 승인에 실패했습니다.')
+    const error = await response.text()
+    throw new Error(error || '노트 승인에 실패했습니다.')
   }
 
   return response.json()
@@ -71,7 +73,8 @@ export async function shareNote(request: NoteShareRequest): Promise<NoteShareRes
   })
 
   if (!response.ok) {
-    throw new Error('공유 노트 생성에 실패했습니다.')
+    const error = await response.text()
+    throw new Error(error || '공유 노트 생성에 실패했습니다.')
   }
 
   return response.json()
@@ -80,7 +83,8 @@ export async function shareNote(request: NoteShareRequest): Promise<NoteShareRes
 export async function fetchPublicNote(session_id: string): Promise<PublicNoteResponse> {
   const response = await fetch(`${baseUrl}/api/note/public/${session_id}`)
   if (!response.ok) {
-    throw new Error('공개 노트를 불러오지 못했습니다.')
+    const error = await response.text()
+    throw new Error(error || '공개 노트를 불러오지 못했습니다.')
   }
 
   return response.json()

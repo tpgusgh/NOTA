@@ -7,8 +7,27 @@ from models.session_models import (
     FeedbackFollowupResponse,
 )
 from services.feedback_utils import parse_feedback_sections
-from services.gemini_service import generate_text
+from services.gemini_service import generate_text, translate_gemini_error
 from services.session_service import get_session
+
+
+def _build_reference_note(session) -> str | None:
+    if session.approved_note:
+        return session.approved_note
+    if session.generated_note:
+        return session.generated_note
+
+    board_text = '\n'.join(session.ocr_history).strip()
+    speech_text = '\n'.join(session.stt_history).strip()
+    if not board_text and not speech_text:
+        return None
+
+    return (
+        '교사 전자칠판 기록:\n'
+        f'{board_text or "전자칠판 기록이 없습니다."}\n\n'
+        '교사 음성 기록:\n'
+        f'{speech_text or "음성 기록이 없습니다."}'
+    )
 
 
 def analyze_feedback(request: FeedbackAnalyzeRequest) -> FeedbackAnalyzeResponse:
@@ -16,9 +35,9 @@ def analyze_feedback(request: FeedbackAnalyzeRequest) -> FeedbackAnalyzeResponse
     if session is None:
         raise HTTPException(status_code=404, detail='세션을 찾을 수 없습니다.')
 
-    reference_note = session.approved_note or session.generated_note
+    reference_note = _build_reference_note(session)
     if not reference_note:
-        raise HTTPException(status_code=400, detail='기준 노트가 아직 생성되지 않았습니다.')
+        raise HTTPException(status_code=400, detail='교사 필기나 음성 기록이 아직 없습니다.')
 
     prompt = (
         '아래는 교사의 기준 필기 노트와 학생이 작성한 필기입니다. '
@@ -31,7 +50,11 @@ def analyze_feedback(request: FeedbackAnalyzeRequest) -> FeedbackAnalyzeResponse
         '결과를 다음 세 부분으로 구분해서 작성해주세요: 누락 항목 / 보완 제안 / 잘한 점.'
     )
 
-    feedback_text = generate_text(prompt)
+    try:
+        feedback_text = generate_text(prompt)
+    except Exception as exc:
+        status_code, message = translate_gemini_error(exc)
+        raise HTTPException(status_code=status_code, detail=message) from exc
     missing, suggestions, positives = parse_feedback_sections(feedback_text)
     return FeedbackAnalyzeResponse(
         missing=missing,
@@ -46,9 +69,9 @@ def analyze_followup(request: FeedbackFollowupRequest) -> FeedbackFollowupRespon
     if session is None:
         raise HTTPException(status_code=404, detail='세션을 찾을 수 없습니다.')
 
-    reference_note = session.approved_note or session.generated_note
+    reference_note = _build_reference_note(session)
     if not reference_note:
-        raise HTTPException(status_code=400, detail='기준 노트가 아직 생성되지 않았습니다.')
+        raise HTTPException(status_code=400, detail='교사 필기나 음성 기록이 아직 없습니다.')
 
     prompt = (
         '아래는 교사의 기준 필기 노트입니다. 학생이 작성한 필기가 있다면 함께 참고하여, '
@@ -61,5 +84,9 @@ def analyze_followup(request: FeedbackFollowupRequest) -> FeedbackFollowupRespon
         + '이 질문에 대해 친절하고 구체적으로 답변해주세요.'
     )
 
-    answer_text = generate_text(prompt)
+    try:
+        answer_text = generate_text(prompt)
+    except Exception as exc:
+        status_code, message = translate_gemini_error(exc)
+        raise HTTPException(status_code=status_code, detail=message) from exc
     return FeedbackFollowupResponse(answer=answer_text)

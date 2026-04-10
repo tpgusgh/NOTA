@@ -6,6 +6,7 @@ import {
   getStoredSessionId,
   getStoredUserRole,
   logout,
+  setCurrentSession,
   UserRole,
 } from '../utils/session'
 import type { SessionInfoResponse } from '../api/session'
@@ -36,6 +37,14 @@ function Dashboard() {
     logout()
     navigate('/')
     window.location.reload()
+  }
+
+  const handleEnterJoinedSession = (targetSessionId: string, title: string, role: UserRole) => {
+    setCurrentSession(targetSessionId, title, role)
+    setSessionId(targetSessionId)
+    setUserRole(role)
+    setStatus('')
+    navigate('/classroom')
   }
 
   return (
@@ -124,11 +133,27 @@ function Dashboard() {
                   <p className="text-slate-700">아직 참여한 수업이 없습니다.</p>
                 ) : (
                   joinedSessions.map((item) => (
-                    <div key={item.session_id} className="rounded-3xl border border-slate-200 bg-white p-4">
-                      <p className="font-semibold text-slate-900">{item.title}</p>
-                      <p className="mt-1 text-slate-600">코드: {item.session_id}</p>
-                      <p className="mt-1 text-slate-600">역할: {item.role === 'teacher' ? '교사' : '학생'}</p>
-                    </div>
+                    <button
+                      key={item.session_id}
+                      type="button"
+                      onClick={() => handleEnterJoinedSession(item.session_id, item.title, item.role)}
+                      className={`w-full rounded-3xl border p-4 text-left transition ${
+                        item.session_id === sessionId
+                          ? 'border-sky-300 bg-sky-50 shadow-sm'
+                          : 'border-slate-200 bg-white hover:border-slate-300 hover:bg-slate-50'
+                      }`}
+                    >
+                      <div className="flex items-start justify-between gap-4">
+                        <div>
+                          <p className="font-semibold text-slate-900">{item.title}</p>
+                          <p className="mt-1 text-slate-600">코드: {item.session_id}</p>
+                          <p className="mt-1 text-slate-600">역할: {item.role === 'teacher' ? '교사' : '학생'}</p>
+                        </div>
+                        <span className="shrink-0 rounded-full bg-slate-900 px-3 py-1 text-sm text-white">
+                          {item.session_id === sessionId ? '현재 수업' : '들어가기'}
+                        </span>
+                      </div>
+                    </button>
                   ))
                 )}
               </div>

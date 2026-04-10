@@ -7,9 +7,17 @@ export interface JoinedSession {
   goals?: string
 }
 
+export interface StoredFeedbackResult {
+  studentNote: string
+  missing: string
+  suggestions: string
+  positives: string
+}
+
 const SESSION_ID_KEY = 'sessionId'
 const USER_ROLE_KEY = 'userRole'
 const JOINED_SESSIONS_KEY = 'joinedSessions'
+const FEEDBACK_RESULT_KEY = 'latestFeedbackResult'
 
 export function getStoredSessionId(): string | null {
   if (typeof window === 'undefined') return null
@@ -57,4 +65,20 @@ export function clearSession() {
 export function logout() {
   if (typeof window === 'undefined') return
   clearSession()
+}
+
+export function setStoredFeedbackResult(result: StoredFeedbackResult) {
+  if (typeof window === 'undefined') return
+  localStorage.setItem(FEEDBACK_RESULT_KEY, JSON.stringify(result))
+}
+
+export function getStoredFeedbackResult(): StoredFeedbackResult | null {
+  if (typeof window === 'undefined') return null
+  try {
+    const value = localStorage.getItem(FEEDBACK_RESULT_KEY)
+    if (!value) return null
+    return JSON.parse(value) as StoredFeedbackResult
+  } catch {
+    return null
+  }
 }

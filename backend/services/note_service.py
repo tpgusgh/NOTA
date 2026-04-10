@@ -8,7 +8,7 @@ from models.session_models import (
     NoteShareRequest,
     NoteShareResponse,
 )
-from services.gemini_service import generate_text
+from services.gemini_service import generate_text, translate_gemini_error
 from services.session_service import get_session, save_sessions
 
 
@@ -37,7 +37,11 @@ def generate_note_for_session(request: NoteGenerateRequest) -> NoteGenerateRespo
         raise HTTPException(status_code=404, detail='세션을 찾을 수 없습니다.')
 
     prompt = _build_note_prompt(session)
-    note_text = generate_text(prompt)
+    try:
+        note_text = generate_text(prompt)
+    except Exception as exc:
+        status_code, message = translate_gemini_error(exc)
+        raise HTTPException(status_code=status_code, detail=message) from exc
     session.generated_note = note_text
     save_sessions()
     return NoteGenerateResponse(note=note_text)
@@ -64,7 +68,11 @@ def share_note_for_session(request: NoteShareRequest) -> NoteShareResponse:
         f'{session.approved_note}\n\n'
         '결석생용으로 제목, 개요, 핵심 개념, 학습 포인트를 포함한 요약 노트를 생성해주세요.'
     )
-    public_note = generate_text(prompt)
+    try:
+        public_note = generate_text(prompt)
+    except Exception as exc:
+        status_code, message = translate_gemini_error(exc)
+        raise HTTPException(status_code=status_code, detail=message) from exc
     session.public_note = public_note
     save_sessions()
     return NoteShareResponse(public_note=public_note)

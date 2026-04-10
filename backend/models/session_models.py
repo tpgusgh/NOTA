@@ -19,9 +19,6 @@ class SessionJoinRequest(BaseModel):
 
 class SessionJoinResponse(BaseModel):
     session_id: str
-
-class SessionJoinResponse(BaseModel):
-    session_id: str
     title: str
     goals: str
 
@@ -32,6 +29,12 @@ class SessionInfoResponse(BaseModel):
     goals: str
     keywords: List[str]
     emphasis: str
+    is_class_active: bool = False
+    class_started_at: Optional[str] = None
+    is_board_shared: bool = False
+    board_data_url: Optional[str] = None
+    board_updated_at: Optional[str] = None
+    latest_ocr_text: Optional[str] = None
     ocr_history: List[str] = Field(default_factory=list)
     stt_history: List[str] = Field(default_factory=list)
     generated_note: Optional[str] = None
@@ -41,6 +44,10 @@ class SessionInfoResponse(BaseModel):
 class OcrAnalyzeRequest(BaseModel):
     image_base64: str
     session_id: str
+
+
+class OcrExtractRequest(BaseModel):
+    image_base64: str
 
 
 class OcrAnalyzeResponse(BaseModel):
@@ -54,6 +61,31 @@ class SttSaveRequest(BaseModel):
 
 class SttSaveResponse(BaseModel):
     saved_text: str
+
+
+class BoardUpdateRequest(BaseModel):
+    session_id: str
+    board_data_url: str
+
+
+class BoardUpdateResponse(BaseModel):
+    board_data_url: Optional[str] = None
+    board_updated_at: Optional[str] = None
+
+
+class BoardStateResponse(BaseModel):
+    board_data_url: Optional[str] = None
+    board_updated_at: Optional[str] = None
+    latest_ocr_text: Optional[str] = None
+
+
+class ClassStateResponse(BaseModel):
+    is_class_active: bool
+    class_started_at: Optional[str] = None
+
+
+class ShareStateResponse(BaseModel):
+    is_board_shared: bool
 
 
 class NoteGenerateRequest(BaseModel):
@@ -113,6 +145,13 @@ class SessionData(BaseModel):
     goals: str
     keywords: List[str]
     emphasis: str
+    is_class_active: bool = False
+    class_started_at: Optional[str] = None
+    is_board_shared: bool = False
+    board_data_url: Optional[str] = None
+    board_updated_at: Optional[str] = None
+    latest_ocr_text: Optional[str] = None
+    last_ocr_image_hash: Optional[str] = None
     ocr_history: List[str] = Field(default_factory=list)
     stt_history: List[str] = Field(default_factory=list)
     generated_note: Optional[str] = None

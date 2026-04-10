@@ -19,7 +19,25 @@ export async function analyzeOcr(request: OcrAnalyzeRequest): Promise<OcrAnalyze
   })
 
   if (!response.ok) {
-    throw new Error('OCR 분석에 실패했습니다.')
+    const error = await response.text()
+    throw new Error(error || 'OCR 분석에 실패했습니다.')
+  }
+
+  return response.json()
+}
+
+export async function extractOcrText(image_base64: string): Promise<OcrAnalyzeResponse> {
+  const response = await fetch(`${baseUrl}/api/ocr/extract`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ image_base64 }),
+  })
+
+  if (!response.ok) {
+    const error = await response.text()
+    throw new Error(error || 'OCR 추출에 실패했습니다.')
   }
 
   return response.json()

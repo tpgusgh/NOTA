@@ -32,7 +32,8 @@ export async function analyzeFeedback(request: FeedbackAnalyzeRequest): Promise<
   })
 
   if (!response.ok) {
-    throw new Error('피드백 분석에 실패했습니다.')
+    const error = await response.text()
+    throw new Error(error || '피드백 분석에 실패했습니다.')
   }
 
   return response.json()
@@ -48,7 +49,8 @@ export async function askFollowup(request: FeedbackFollowupRequest): Promise<Fee
   })
 
   if (!response.ok) {
-    throw new Error('추가 질문에 답변할 수 없습니다.')
+    const error = await response.text()
+    throw new Error(error || '추가 질문에 답변할 수 없습니다.')
   }
 
   return response.json()
