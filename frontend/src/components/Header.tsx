@@ -13,7 +13,7 @@ function Header() {
       <div className="mx-auto flex max-w-6xl flex-col gap-3 px-4 py-4 md:flex-row md:items-center md:justify-between">
         <div>
           <Link to="/" className="text-xl font-semibold text-white">
-            CLAUDE Edu
+            NOTA
           </Link>
           <p className="mt-1 text-sm text-slate-300">
             현재 세션: {sessionId ?? '설정된 세션이 없습니다.'}

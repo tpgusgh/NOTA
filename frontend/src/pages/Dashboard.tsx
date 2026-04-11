@@ -115,7 +115,7 @@ function Dashboard() {
               <div className="flex h-10 w-10 items-center justify-center rounded-2xl bg-indigo-600 text-white text-lg font-bold shadow-sm">
                 C
               </div>
-              <h1 className="text-3xl font-bold text-slate-900">CLAUDE Edu</h1>
+              <h1 className="text-3xl font-bold text-slate-900">NOTA</h1>
             </div>
             <p className="mt-3 max-w-2xl leading-8 text-slate-500">
               수업을 만들고 참여하는 AI 교육 플랫폼입니다. 수업을 생성하거나 코드로 참여하고, 아래에서 내가 들어간 수업을 확인하세요.
