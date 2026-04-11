@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
+import ReactMarkdown from 'react-markdown'
 import { analyzeFeedbackWithImage, askFollowup } from '../api/feedback'
 import { generateSectionSummary, getSessionInfo } from '../api/session'
 import { getStoredFeedbackResult, getStoredSessionId, type StoredFeedbackResult } from '../utils/session'
@@ -147,6 +148,7 @@ function StudentFeedback() {
         session_id: sessionId,
         question,
         student_note: currentNote,
+        section_index: selectedSection?.index,
       })
       setAnswer(result.answer)
     } catch (error) {
@@ -223,6 +225,9 @@ function StudentFeedback() {
                       <p className="mt-1 text-xs text-slate-400">
                         칠판 {section.ocr_count}건 · 음성 {section.stt_count}건
                       </p>
+                      {section.lesson_plan && (
+                        <p className="mt-1 text-xs text-indigo-500 line-clamp-2">{section.lesson_plan}</p>
+                      )}
                     </div>
                   </div>
 
@@ -288,22 +293,26 @@ function StudentFeedback() {
                   <div>
                     <label className="text-sm font-semibold text-slate-700">필기 사진 (선택)</label>
                     <p className="mt-1 text-xs text-slate-400">
-                      노트 사진을 업로드하면 AI가 내용을 인식해 함께 분석합니다.
+                      노트 사진을 올리면 AI가 내용을 인식해 함께 분석합니다.
                     </p>
-                    <label className="mt-2 flex cursor-pointer items-center gap-3 rounded-2xl border-2 border-dashed border-slate-200 bg-slate-50/50 p-4 transition hover:border-indigo-300 hover:bg-indigo-50/30">
-                      <span className="rounded-xl bg-indigo-100 px-3 py-1.5 text-sm font-semibold text-indigo-700">
-                        사진 선택
-                      </span>
-                      <span className="text-sm text-slate-400">
-                        {photoFileName || '파일을 선택하세요 (jpg, png 등)'}
-                      </span>
-                      <input
-                        type="file"
-                        accept="image/*"
-                        className="hidden"
-                        onChange={handlePhotoChange}
-                      />
-                    </label>
+                    <div className="mt-2 flex gap-2">
+                      <label className="flex flex-1 cursor-pointer items-center gap-2 rounded-2xl border-2 border-dashed border-indigo-200 bg-indigo-50/30 p-3 transition hover:border-indigo-400 hover:bg-indigo-50/60">
+                        <span className="rounded-xl bg-indigo-100 px-3 py-1.5 text-xs font-semibold text-indigo-700 whitespace-nowrap">파일 선택</span>
+                        <span className="truncate text-xs text-slate-400">{photoFileName || '갤러리에서 선택'}</span>
+                        <input type="file" accept="image/*" className="hidden" onChange={handlePhotoChange} />
+                      </label>
+                      <label className="flex cursor-pointer items-center gap-2 rounded-2xl border-2 border-dashed border-sky-200 bg-sky-50/30 px-4 py-3 transition hover:border-sky-400 hover:bg-sky-50/60">
+                        <span className="text-lg">📷</span>
+                        <span className="text-xs font-semibold text-sky-700 whitespace-nowrap">촬영</span>
+                        <input type="file" accept="image/*" capture="environment" className="hidden" onChange={handlePhotoChange} />
+                      </label>
+                    </div>
+                    {photoBase64 && (
+                      <div className="mt-2 flex items-center gap-2">
+                        <span className="text-xs text-emerald-600">✓ {photoFileName} 선택됨</span>
+                        <button type="button" onClick={() => { setPhotoBase64(null); setPhotoFileName('') }} className="text-xs text-slate-400 hover:text-slate-600">제거</button>
+                      </div>
+                    )}
                   </div>
 
                   <button
@@ -324,15 +333,21 @@ function StudentFeedback() {
                   <div className="mt-4 space-y-3">
                     <section className="rounded-2xl border border-rose-100 bg-rose-50/60 p-4">
                       <h3 className="font-semibold text-rose-700">누락 항목</h3>
-                      <p className="mt-2 whitespace-pre-wrap text-slate-700">{currentResult.missing}</p>
+                      <div className="prose prose-sm mt-2 max-w-none text-slate-700">
+                        <ReactMarkdown>{currentResult.missing}</ReactMarkdown>
+                      </div>
                     </section>
                     <section className="rounded-2xl border border-amber-100 bg-amber-50/60 p-4">
                       <h3 className="font-semibold text-amber-700">보완 제안</h3>
-                      <p className="mt-2 whitespace-pre-wrap text-slate-700">{currentResult.suggestions}</p>
+                      <div className="prose prose-sm mt-2 max-w-none text-slate-700">
+                        <ReactMarkdown>{currentResult.suggestions}</ReactMarkdown>
+                      </div>
                     </section>
                     <section className="rounded-2xl border border-emerald-100 bg-emerald-50/60 p-4">
                       <h3 className="font-semibold text-emerald-700">잘한 점</h3>
-                      <p className="mt-2 whitespace-pre-wrap text-slate-700">{currentResult.positives}</p>
+                      <div className="prose prose-sm mt-2 max-w-none text-slate-700">
+                        <ReactMarkdown>{currentResult.positives}</ReactMarkdown>
+                      </div>
                     </section>
                   </div>
                 </div>
@@ -356,15 +371,21 @@ function StudentFeedback() {
                   <div className="mt-4 space-y-3">
                     <section className="rounded-2xl border border-rose-100 bg-rose-50/60 p-4">
                       <h3 className="font-semibold text-rose-700">누락 항목</h3>
-                      <p className="mt-2 whitespace-pre-wrap text-slate-700">{autoFeedbackResult.missing}</p>
+                      <div className="prose prose-sm mt-2 max-w-none text-slate-700">
+                        <ReactMarkdown>{autoFeedbackResult.missing}</ReactMarkdown>
+                      </div>
                     </section>
                     <section className="rounded-2xl border border-amber-100 bg-amber-50/60 p-4">
                       <h3 className="font-semibold text-amber-700">보완 제안</h3>
-                      <p className="mt-2 whitespace-pre-wrap text-slate-700">{autoFeedbackResult.suggestions}</p>
+                      <div className="prose prose-sm mt-2 max-w-none text-slate-700">
+                        <ReactMarkdown>{autoFeedbackResult.suggestions}</ReactMarkdown>
+                      </div>
                     </section>
                     <section className="rounded-2xl border border-emerald-100 bg-emerald-50/60 p-4">
                       <h3 className="font-semibold text-emerald-700">잘한 점</h3>
-                      <p className="mt-2 whitespace-pre-wrap text-slate-700">{autoFeedbackResult.positives}</p>
+                      <div className="prose prose-sm mt-2 max-w-none text-slate-700">
+                        <ReactMarkdown>{autoFeedbackResult.positives}</ReactMarkdown>
+                      </div>
                     </section>
                   </div>
                 </div>
@@ -414,7 +435,9 @@ function StudentFeedback() {
             {answer && (
               <div className="mt-4 rounded-2xl border border-sky-100 bg-sky-50/60 p-4">
                 <h3 className="font-semibold text-sky-800">답변</h3>
-                <p className="mt-3 whitespace-pre-wrap text-sm text-slate-700">{answer}</p>
+                <div className="prose prose-sm mt-3 max-w-none text-slate-700">
+                  <ReactMarkdown>{answer}</ReactMarkdown>
+                </div>
               </div>
             )}
 

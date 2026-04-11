@@ -75,12 +75,12 @@ def _build_section_reference(session, section_index: int) -> str | None:
     speech_text = '\n'.join(section.stt_history).strip()
     if not board_text and not speech_text:
         return None
-    return (
-        '교사 전자칠판 기록:\n'
-        f'{board_text or "전자칠판 기록이 없습니다."}\n\n'
-        '교사 음성 기록:\n'
-        f'{speech_text or "음성 기록이 없습니다."}'
-    )
+    parts = []
+    if section.lesson_plan:
+        parts.append(f'오늘 수업 계획:\n{section.lesson_plan}')
+    parts.append(f'교사 전자칠판 기록:\n{board_text or "전자칠판 기록이 없습니다."}')
+    parts.append(f'교사 음성 기록:\n{speech_text or "음성 기록이 없습니다."}')
+    return '\n\n'.join(parts)
 
 
 def analyze_feedback_with_image(request: FeedbackWithImageRequest) -> FeedbackAnalyzeResponse:
@@ -110,14 +110,16 @@ def analyze_feedback_with_image(request: FeedbackWithImageRequest) -> FeedbackAn
             pass
 
     prompt = (
-        '아래는 교사의 기준 필기 노트와 학생이 작성한 필기입니다. '
-        '학생 필기에서 누락된 핵심 개념, 잘못 이해한 내용, 교육 목적에서 벗어난 부분을 분석하고 '
-        '구체적인 보완 방법과 함께 친절하게 피드백해주세요.\n\n'
-        '교사 기준 노트:\n'
+        '당신은 친절한 교육 AI 튜터입니다. 아래는 교사의 수업 자료와 학생이 작성한 필기입니다.\n'
+        '각 항목에서 마크다운 형식(- 항목, **강조** 등)을 사용해 구체적으로 작성해주세요.\n\n'
+        '교사 수업 자료:\n'
         f'{reference_note}\n\n'
         '학생 필기:\n'
         f'{combined_student or "(필기 없음)"}\n\n'
-        '결과를 다음 세 부분으로 구분해서 작성해주세요: 누락 항목 / 보완 제안 / 잘한 점.'
+        '아래 세 부분을 각각 작성해주세요:\n'
+        '## 누락 항목\n수업에서 다뤘지만 학생 필기에 빠진 내용\n\n'
+        '## 보완 제안\n더 잘 이해하기 위해 추가하거나 수정할 내용\n\n'
+        '## 잘한 점\n학생이 잘 파악한 내용'
     )
 
     try:
@@ -139,19 +141,24 @@ def analyze_followup(request: FeedbackFollowupRequest) -> FeedbackFollowupRespon
     if session is None:
         raise HTTPException(status_code=404, detail='세션을 찾을 수 없습니다.')
 
-    reference_note = _build_reference_note(session)
+    # 섹션 지정 시 해당 섹션 컨텍스트, 아니면 전체 컨텍스트
+    if request.section_index is not None:
+        reference_note = _build_section_reference(session, request.section_index)
+    else:
+        reference_note = _build_reference_note(session)
+
     if not reference_note:
         raise HTTPException(status_code=400, detail='교사 필기나 음성 기록이 아직 없습니다.')
 
     prompt = (
-        '아래는 교사의 기준 필기 노트입니다. 학생이 작성한 필기가 있다면 함께 참고하여, '
-        '학생이 추가로 묻는 질문에 답변하고 도움이 되는 학습 포인트를 제공합니다.\n\n'
-        '교사 기준 노트:\n'
+        '당신은 친절한 교육 AI 튜터입니다. 아래 수업 자료를 바탕으로 학생의 질문에 답변해주세요.\n'
+        '답변은 마크다운 형식(##, **, - 등)을 사용하여 구조적으로 작성해주세요.\n\n'
+        '수업 자료:\n'
         f'{reference_note}\n\n'
         + (f'학생 필기:\n{request.student_note}\n\n' if request.student_note else '')
-        + '질문:\n'
-        f'{request.question}\n\n'
-        + '이 질문에 대해 친절하고 구체적으로 답변해주세요.'
+        + f'학생 질문:\n{request.question}\n\n'
+        '위 수업 내용을 바탕으로 질문에 명확하고 친절하게 답변해주세요. '
+        '수업에서 다루지 않은 내용이라면 그렇다고 알려주세요.'
     )
 
     try:

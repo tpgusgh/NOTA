@@ -12,6 +12,7 @@ from models.session_models import (
     SessionJoinResponse,
     SessionInfoResponse,
     SectionListItem,
+    StartClassRequest,
     StopClassRequest,
 )
 from services.session_service import (
@@ -54,6 +55,7 @@ def get_session_endpoint(session_id: str):
             started_at=s.started_at,
             ended_at=s.ended_at,
             name=s.name,
+            lesson_plan=s.lesson_plan,
             has_summary=s.generated_note is not None,
             ocr_count=len(s.ocr_history),
             stt_count=len(s.stt_history),
@@ -74,6 +76,7 @@ def get_sections_endpoint(session_id: str):
             started_at=s.started_at,
             ended_at=s.ended_at,
             name=s.name,
+            lesson_plan=s.lesson_plan,
             has_summary=s.generated_note is not None,
             ocr_count=len(s.ocr_history),
             stt_count=len(s.stt_history),
@@ -122,8 +125,8 @@ def clear_board_endpoint(session_id: str):
 
 
 @router.post("/{session_id}/start", response_model=ClassStateResponse)
-def start_class_endpoint(session_id: str):
-    session = start_class(session_id)
+def start_class_endpoint(session_id: str, request: StartClassRequest = StartClassRequest()):
+    session = start_class(session_id, lesson_plan=request.lesson_plan)
     if session is None:
         raise HTTPException(status_code=404, detail="세션을 찾을 수 없습니다.")
 

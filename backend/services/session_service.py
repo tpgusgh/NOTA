@@ -60,7 +60,7 @@ def update_board(session_id: str, board_data_url: str) -> SessionData | None:
     return session
 
 
-def start_class(session_id: str) -> SessionData | None:
+def start_class(session_id: str, lesson_plan: str | None = None) -> SessionData | None:
     session = get_session(session_id)
     if session is None:
         return None
@@ -70,6 +70,7 @@ def start_class(session_id: str) -> SessionData | None:
     session.is_board_shared = True
     session.current_section_ocr_start = len(session.ocr_history)
     session.current_section_stt_start = len(session.stt_history)
+    session.current_lesson_plan = lesson_plan
     _save_sessions()
     return session
 
@@ -85,6 +86,7 @@ def stop_class(session_id: str, section_name: str | None = None) -> SessionData 
             started_at=session.class_started_at,
             ended_at=datetime.now(timezone.utc).isoformat(),
             name=section_name,
+            lesson_plan=getattr(session, 'current_lesson_plan', None),
             ocr_history=session.ocr_history[session.current_section_ocr_start:],
             stt_history=session.stt_history[session.current_section_stt_start:],
             board_snapshot=session.board_data_url,
@@ -93,6 +95,7 @@ def stop_class(session_id: str, section_name: str | None = None) -> SessionData 
 
     session.is_class_active = False
     session.is_board_shared = False
+    session.current_lesson_plan = None
     _save_sessions()
     return session
 

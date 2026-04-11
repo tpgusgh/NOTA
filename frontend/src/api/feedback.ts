@@ -16,6 +16,7 @@ export interface FeedbackFollowupRequest {
   session_id: string
   question: string
   student_note?: string
+  section_index?: number
 }
 
 export interface FeedbackFollowupResponse {

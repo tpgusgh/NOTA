@@ -1,5 +1,6 @@
 import { PointerEvent, useEffect, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
+import ReactMarkdown from 'react-markdown'
 import { analyzeFeedback, analyzeFeedbackWithImage, askFollowup } from '../api/feedback'
 import { generateNote } from '../api/note'
 import { analyzeOcr, extractOcrText } from '../api/ocr'
@@ -38,6 +39,9 @@ function Classroom() {
   const nextOcrAllowedAtRef = useRef(0)
   const previousClassActiveRef = useRef(false)
   const hasStudentBoardInkRef = useRef(false)
+  // STT 클로저 stale 방지용 refs
+  const sessionIdRef = useRef<string | null>(null)
+  const sttHistoryRef = useRef<string[]>([])
 
   const [sessionId, setSessionId] = useState<string | null>(null)
   const [userRole, setUserRole] = useState<UserRole | null>(null)
@@ -58,6 +62,14 @@ function Classroom() {
   const [studentPenColor, setStudentPenColor] = useState('#0f172a')
   const [studentIsEraser, setStudentIsEraser] = useState(false)
   const [studentPenSize, setStudentPenSize] = useState(4)
+  // 수업 시작 모달 (교사 - 오늘 수업 내용 입력)
+  const [showStartClassModal, setShowStartClassModal] = useState(false)
+  const [pendingLessonPlan, setPendingLessonPlan] = useState('')
+  const [isStartingClass, setIsStartingClass] = useState(false)
+  // 수업 종료 모달 (교사 - 섹션 이름 입력)
+  const [showStopClassModal, setShowStopClassModal] = useState(false)
+  const [pendingSectionName, setPendingSectionName] = useState('')
+  const [isStoppingClass, setIsStoppingClass] = useState(false)
   // 수업 종료 / 피드백 모달
   const [showEndModal, setShowEndModal] = useState(false)
   const [showFeedbackModal, setShowFeedbackModal] = useState(false)
@@ -67,6 +79,9 @@ function Classroom() {
   const [feedbackModalPhotoName, setFeedbackModalPhotoName] = useState('')
   const [feedbackModalResult, setFeedbackModalResult] = useState<{ missing: string; suggestions: string; positives: string } | null>(null)
   const [isSubmittingFeedback, setIsSubmittingFeedback] = useState(false)
+  const [feedbackModalFollowup, setFeedbackModalFollowup] = useState('')
+  const [feedbackModalAnswer, setFeedbackModalAnswer] = useState('')
+  const [isAskingFollowup, setIsAskingFollowup] = useState(false)
   // 섹션 요약
   const [sectionSummaries, setSectionSummaries] = useState<Record<number, string>>({})
   const [loadingSummaryIndex, setLoadingSummaryIndex] = useState<number | null>(null)
@@ -110,6 +125,10 @@ function Classroom() {
     }
     previousClassActiveRef.current = isClassActive
   }, [isClassActive, isTeacher])
+
+  // STT 콜백 stale 방지: sessionId / sttHistory를 항상 최신 ref로 유지
+  useEffect(() => { sessionIdRef.current = sessionId }, [sessionId])
+  useEffect(() => { sttHistoryRef.current = sessionInfo?.stt_history ?? [] }, [sessionInfo])
 
   const appendLog = (message: string) => {
     setStatus(`${new Date().toLocaleTimeString()} - ${message}`)
@@ -559,20 +578,19 @@ function Classroom() {
   }
 
   const persistSpeechSegment = async (text: string) => {
-    if (!sessionId || !text.trim()) return
-    if (!ensureClassActive()) return
+    // ref로 항상 최신 sessionId를 읽음 (클로저 stale 방지)
+    const sid = sessionIdRef.current
+    if (!sid || !text.trim()) return
 
     try {
-      await saveStt({ text: text.trim(), session_id: sessionId })
+      await saveStt({ text: text.trim(), session_id: sid })
+      sttHistoryRef.current = [...sttHistoryRef.current, text.trim()]
       setSessionInfo((current) =>
         current
-          ? {
-              ...current,
-              stt_history: [...current.stt_history, text.trim()],
-            }
+          ? { ...current, stt_history: [...current.stt_history, text.trim()] }
           : current,
       )
-      setSpeechText((current) => [current, text.trim()].filter(Boolean).join('\n'))
+      setSpeechText(sttHistoryRef.current.join('\n'))
       appendLog('음성 텍스트가 저장되었습니다.')
     } catch (error) {
       appendLog(error instanceof Error ? error.message : '음성 텍스트 저장에 실패했습니다.')
@@ -621,7 +639,8 @@ function Classroom() {
       if (finalTranscript.trim()) {
         void persistSpeechSegment(finalTranscript)
       } else if (interimTranscript.trim()) {
-        setSpeechText((sessionInfo?.stt_history.join('\n') ? `${sessionInfo.stt_history.join('\n')}\n` : '') + interimTranscript.trim())
+        const base = sttHistoryRef.current.join('\n')
+        setSpeechText((base ? base + '\n' : '') + interimTranscript.trim())
       }
     }
 
@@ -779,10 +798,30 @@ function Classroom() {
         section_index: feedbackModalSectionIndex ?? undefined,
       })
       setFeedbackModalResult({ missing: result.missing, suggestions: result.suggestions, positives: result.positives })
+      setFeedbackModalFollowup('')
+      setFeedbackModalAnswer('')
     } catch (error) {
       appendLog(error instanceof Error ? error.message : '피드백 분석에 실패했습니다.')
     } finally {
       setIsSubmittingFeedback(false)
+    }
+  }
+
+  const handleAskModalFollowup = async () => {
+    if (!sessionId || !feedbackModalFollowup.trim()) return
+    setIsAskingFollowup(true)
+    try {
+      const result = await askFollowup({
+        session_id: sessionId,
+        question: feedbackModalFollowup,
+        student_note: feedbackModalNote || undefined,
+        section_index: feedbackModalSectionIndex ?? undefined,
+      })
+      setFeedbackModalAnswer(result.answer)
+    } catch (error) {
+      appendLog(error instanceof Error ? error.message : '질문 답변에 실패했습니다.')
+    } finally {
+      setIsAskingFollowup(false)
     }
   }
 
@@ -836,14 +875,15 @@ function Classroom() {
     window.speechSynthesis.speak(utterance)
   }
 
-  const handleStartClass = async () => {
+  const handleStartClass = async (lessonPlan?: string) => {
     if (!sessionId) {
       appendLog('세션 ID가 없습니다.')
       return
     }
 
+    setIsStartingClass(true)
     try {
-      const result = await startClass(sessionId)
+      const result = await startClass(sessionId, lessonPlan || undefined)
       setSessionInfo((current) =>
         current
           ? {
@@ -860,20 +900,58 @@ function Classroom() {
       }
     } catch (error) {
       appendLog(error instanceof Error ? error.message : '수업 시작에 실패했습니다.')
+    } finally {
+      setIsStartingClass(false)
     }
   }
 
-  const handleStopClass = async () => {
+  const handleStopClass = async (sectionName?: string) => {
     if (!sessionId) {
       appendLog('세션 ID가 없습니다.')
       return
     }
 
+    setIsStoppingClass(true)
     stopBoardTimers()
+
+    // 1. 마지막 칠판 내용 저장 + OCR (수업 종료 전에 실행)
+    const boardDataUrl = getBoardDataUrl()
+    if (boardDataUrl) {
+      try {
+        appendLog('마지막 칠판 내용을 분석 중...')
+        setIsSavingBoard(true)
+        await saveBoardState(sessionId, boardDataUrl)
+        const imageBase64 = boardDataUrl.split(',')[1]
+        if (imageBase64) {
+          setIsRunningOcr(true)
+          const ocrResult = await analyzeOcr({ image_base64: imageBase64, session_id: sessionId })
+          setSessionInfo((current) =>
+            current
+              ? {
+                  ...current,
+                  latest_ocr_text: ocrResult.text,
+                  ocr_history:
+                    current.ocr_history[current.ocr_history.length - 1] === ocrResult.text
+                      ? current.ocr_history
+                      : [...current.ocr_history, ocrResult.text],
+                }
+              : current,
+          )
+        }
+      } catch {
+        // OCR 실패해도 수업 종료는 계속 진행
+      } finally {
+        setIsSavingBoard(false)
+        setIsRunningOcr(false)
+      }
+    }
+
+    // 2. 음성 인식 종료
     stopSpeechRecognition()
 
+    // 3. 수업 종료 API 호출
     try {
-      const result = await stopClass(sessionId)
+      const result = await stopClass(sessionId, sectionName || undefined)
       setSessionInfo((current) =>
         current
           ? {
@@ -887,7 +965,26 @@ function Classroom() {
       appendLog('수업이 종료되었습니다.')
     } catch (error) {
       appendLog(error instanceof Error ? error.message : '수업 종료에 실패했습니다.')
+      setIsStoppingClass(false)
+      return
     }
+
+    // 4. 칠판 초기화
+    clearBoardCanvas()
+    hasLocalBoardChangesRef.current = false
+    try {
+      const cleared = await clearBoardState(sessionId)
+      appliedBoardVersionRef.current = cleared.board_updated_at ?? null
+      setSessionInfo((current) =>
+        current
+          ? { ...current, board_data_url: null, latest_ocr_text: null }
+          : current,
+      )
+    } catch {
+      // 초기화 실패해도 무시
+    }
+
+    setIsStoppingClass(false)
   }
 
   const handleLeaveSession = () => {
@@ -1023,19 +1120,19 @@ function Classroom() {
             <div className="mb-5 flex flex-wrap gap-2">
               <button
                 type="button"
-                onClick={() => void handleStartClass()}
-                disabled={isClassActive}
+                onClick={() => { setPendingLessonPlan(''); setShowStartClassModal(true) }}
+                disabled={isClassActive || isStartingClass}
                 className="rounded-2xl bg-emerald-600 px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-emerald-500 disabled:cursor-not-allowed disabled:opacity-50"
               >
-                수업 시작
+                {isStartingClass ? '시작 중...' : '수업 시작'}
               </button>
               <button
                 type="button"
-                onClick={() => void handleStopClass()}
-                disabled={!isClassActive}
+                onClick={() => { setPendingSectionName(''); setShowStopClassModal(true) }}
+                disabled={!isClassActive || isStoppingClass}
                 className="rounded-2xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 shadow-sm transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
               >
-                수업 종료
+                {isStoppingClass ? '종료 중...' : '수업 종료'}
               </button>
               <button
                 type="button"
@@ -1292,17 +1389,9 @@ function Classroom() {
                   value={studentNote}
                   onChange={(event) => setStudentNote(event.target.value)}
                 />
-                <button
-                  type="button"
-                  onClick={() => void handleAnalyzeFeedback()}
-                  disabled={!isBoardShared}
-                  className="mt-3 rounded-xl bg-indigo-600 px-5 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-indigo-500 disabled:cursor-not-allowed disabled:opacity-60"
-                >
-                  교사 필기와 비교하기
-                </button>
               </div>
 
-              {(feedback.missing || feedback.suggestions || feedback.positives) && (
+              {!isClassActive && (feedback.missing || feedback.suggestions || feedback.positives) && (
                 <div className="rounded-2xl border border-slate-100 bg-white p-4 shadow-sm">
                   <h2 className="font-bold text-slate-900">피드백 결과</h2>
                   <div className="mt-3 space-y-3">
@@ -1396,6 +1485,9 @@ function Classroom() {
                               <p className="mt-0.5 text-xs text-slate-400">
                                 칠판 {section.ocr_count}건 · 음성 {section.stt_count}건
                               </p>
+                              {section.lesson_plan && (
+                                <p className="mt-0.5 text-xs text-indigo-500 line-clamp-2">{section.lesson_plan}</p>
+                              )}
                             </div>
                             <div className="flex flex-wrap gap-1.5">
                               <button
@@ -1470,6 +1562,98 @@ function Classroom() {
         </div>
       )}
 
+      {/* 수업 시작 모달 (교사용 - 오늘 수업 내용 입력) */}
+      {showStartClassModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4 backdrop-blur-sm">
+          <div className="w-full max-w-sm rounded-3xl bg-white p-8 shadow-2xl ring-1 ring-slate-100">
+            <div className="mb-1 flex h-12 w-12 items-center justify-center rounded-2xl bg-emerald-100 text-2xl">
+              📋
+            </div>
+            <h2 className="mt-4 text-xl font-bold text-slate-900">수업 시작</h2>
+            <p className="mt-2 text-sm text-slate-500">
+              오늘 수업에서 다룰 내용을 입력하면 AI가 피드백과 질의응답에 활용합니다.
+            </p>
+            <div className="mt-5">
+              <label className="text-sm font-semibold text-slate-700">오늘 수업 내용 (선택)</label>
+              <textarea
+                value={pendingLessonPlan}
+                onChange={(e) => setPendingLessonPlan(e.target.value)}
+                className="mt-2 h-32 w-full resize-none rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-slate-900 focus:border-emerald-400 focus:outline-none focus:ring-1 focus:ring-emerald-100"
+                placeholder="예: 미적분 기초 - 극한의 개념, 연속함수 정의, 미분의 정의..."
+                autoFocus
+              />
+            </div>
+            <div className="mt-5 flex gap-3">
+              <button
+                type="button"
+                onClick={() => setShowStartClassModal(false)}
+                className="flex-1 rounded-2xl border border-slate-200 bg-white px-5 py-3 text-sm font-medium text-slate-600 transition hover:bg-slate-50"
+              >
+                취소
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setShowStartClassModal(false)
+                  void handleStartClass(pendingLessonPlan)
+                }}
+                className="flex-1 rounded-2xl bg-emerald-600 px-5 py-3 text-sm font-semibold text-white shadow-sm transition hover:bg-emerald-500"
+              >
+                수업 시작
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 수업 종료 확인 모달 (교사용 - 섹션 이름 입력) */}
+      {showStopClassModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4 backdrop-blur-sm">
+          <div className="w-full max-w-sm rounded-3xl bg-white p-8 shadow-2xl ring-1 ring-slate-100">
+            <h2 className="text-xl font-bold text-slate-900">수업 종료</h2>
+            <p className="mt-2 text-sm text-slate-500">
+              종료 전 칠판 내용을 마지막으로 OCR 저장하고 보드를 초기화합니다.
+            </p>
+            <div className="mt-5">
+              <label className="text-sm font-semibold text-slate-700">섹션 이름 (선택)</label>
+              <input
+                type="text"
+                value={pendingSectionName}
+                onChange={(e) => setPendingSectionName(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') {
+                    setShowStopClassModal(false)
+                    void handleStopClass(pendingSectionName)
+                  }
+                }}
+                className="mt-2 w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-slate-900 focus:border-indigo-400 focus:outline-none focus:ring-1 focus:ring-indigo-100"
+                placeholder="예: 1단원 도입, 미분 기초..."
+                autoFocus
+              />
+            </div>
+            <div className="mt-5 flex gap-3">
+              <button
+                type="button"
+                onClick={() => setShowStopClassModal(false)}
+                className="flex-1 rounded-2xl border border-slate-200 bg-white px-5 py-3 text-sm font-medium text-slate-600 transition hover:bg-slate-50"
+              >
+                취소
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setShowStopClassModal(false)
+                  void handleStopClass(pendingSectionName)
+                }}
+                className="flex-1 rounded-2xl bg-indigo-600 px-5 py-3 text-sm font-semibold text-white shadow-sm transition hover:bg-indigo-500"
+              >
+                수업 종료
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* 피드백 제출 모달 */}
       {showFeedbackModal && (
         <div className="fixed inset-0 z-50 overflow-y-auto bg-black/40 p-4 backdrop-blur-sm">
@@ -1485,7 +1669,7 @@ function Classroom() {
               </h2>
               <button
                 type="button"
-                onClick={() => { setShowFeedbackModal(false); setFeedbackModalResult(null) }}
+                onClick={() => { setShowFeedbackModal(false); setFeedbackModalResult(null); setFeedbackModalAnswer('') }}
                 className="rounded-xl p-2 text-slate-400 transition hover:bg-slate-100 hover:text-slate-700"
               >
                 ✕
@@ -1506,21 +1690,37 @@ function Classroom() {
 
                 <div>
                   <label className="text-sm font-semibold text-slate-700">필기 사진 (선택)</label>
-                  <p className="mt-1 text-xs text-slate-400">노트, 교재 메모 등 사진을 업로드하면 AI가 내용을 인식해 분석합니다.</p>
-                  <label className="mt-2 flex cursor-pointer items-center gap-3 rounded-2xl border-2 border-dashed border-indigo-200 bg-indigo-50/30 p-4 transition hover:border-indigo-400 hover:bg-indigo-50/60">
-                    <span className="rounded-xl bg-indigo-100 px-3 py-1.5 text-sm font-semibold text-indigo-700">
-                      사진 선택
-                    </span>
-                    <span className="text-sm text-slate-400">
-                      {feedbackModalPhotoName || '파일을 선택하세요 (jpg, png 등)'}
-                    </span>
-                    <input
-                      type="file"
-                      accept="image/*"
-                      className="hidden"
-                      onChange={handleFeedbackPhotoChange}
-                    />
-                  </label>
+                  <p className="mt-1 text-xs text-slate-400">노트나 교재 사진을 올리면 AI가 내용을 인식해 함께 분석합니다.</p>
+                  <div className="mt-2 flex gap-2">
+                    {/* 갤러리/파일 선택 */}
+                    <label className="flex flex-1 cursor-pointer items-center gap-2 rounded-2xl border-2 border-dashed border-indigo-200 bg-indigo-50/30 p-3 transition hover:border-indigo-400 hover:bg-indigo-50/60">
+                      <span className="rounded-xl bg-indigo-100 px-3 py-1.5 text-xs font-semibold text-indigo-700 whitespace-nowrap">
+                        파일 선택
+                      </span>
+                      <span className="truncate text-xs text-slate-400">
+                        {feedbackModalPhotoName || '갤러리에서 선택'}
+                      </span>
+                      <input type="file" accept="image/*" className="hidden" onChange={handleFeedbackPhotoChange} />
+                    </label>
+                    {/* 카메라 직접 촬영 */}
+                    <label className="flex cursor-pointer items-center gap-2 rounded-2xl border-2 border-dashed border-sky-200 bg-sky-50/30 px-4 py-3 transition hover:border-sky-400 hover:bg-sky-50/60">
+                      <span className="text-lg">📷</span>
+                      <span className="text-xs font-semibold text-sky-700 whitespace-nowrap">촬영</span>
+                      <input type="file" accept="image/*" capture="environment" className="hidden" onChange={handleFeedbackPhotoChange} />
+                    </label>
+                  </div>
+                  {feedbackModalPhoto && (
+                    <div className="mt-2 flex items-center gap-2">
+                      <span className="text-xs text-emerald-600">✓ {feedbackModalPhotoName} 선택됨</span>
+                      <button
+                        type="button"
+                        onClick={() => { setFeedbackModalPhoto(null); setFeedbackModalPhotoName('') }}
+                        className="text-xs text-slate-400 hover:text-slate-600"
+                      >
+                        제거
+                      </button>
+                    </div>
+                  )}
                 </div>
 
                 <button
@@ -1534,29 +1734,69 @@ function Classroom() {
               </div>
             ) : (
               <div className="mt-6 space-y-4">
+                {/* 피드백 결과 - 마크다운 렌더링 */}
                 <div className="rounded-2xl border border-rose-100 bg-rose-50/60 p-4">
                   <h3 className="font-semibold text-rose-700">누락 항목</h3>
-                  <p className="mt-2 whitespace-pre-wrap text-slate-700">{feedbackModalResult.missing}</p>
+                  <div className="prose prose-sm mt-2 max-w-none text-slate-700">
+                    <ReactMarkdown>{feedbackModalResult.missing}</ReactMarkdown>
+                  </div>
                 </div>
                 <div className="rounded-2xl border border-amber-100 bg-amber-50/60 p-4">
                   <h3 className="font-semibold text-amber-700">보완 제안</h3>
-                  <p className="mt-2 whitespace-pre-wrap text-slate-700">{feedbackModalResult.suggestions}</p>
+                  <div className="prose prose-sm mt-2 max-w-none text-slate-700">
+                    <ReactMarkdown>{feedbackModalResult.suggestions}</ReactMarkdown>
+                  </div>
                 </div>
                 <div className="rounded-2xl border border-emerald-100 bg-emerald-50/60 p-4">
                   <h3 className="font-semibold text-emerald-700">잘한 점</h3>
-                  <p className="mt-2 whitespace-pre-wrap text-slate-700">{feedbackModalResult.positives}</p>
+                  <div className="prose prose-sm mt-2 max-w-none text-slate-700">
+                    <ReactMarkdown>{feedbackModalResult.positives}</ReactMarkdown>
+                  </div>
                 </div>
+
+                {/* 후속 질문 */}
+                <div className="rounded-2xl border border-sky-100 bg-sky-50/40 p-4">
+                  <h3 className="font-semibold text-sky-800">후속 질문</h3>
+                  <textarea
+                    className="mt-2 h-24 w-full resize-none rounded-xl border border-slate-200 bg-white p-3 text-sm text-slate-900 focus:border-sky-400 focus:outline-none"
+                    placeholder="피드백 내용이나 수업 내용에 대해 궁금한 점을 질문하세요."
+                    value={feedbackModalFollowup}
+                    onChange={(e) => setFeedbackModalFollowup(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter' && !e.shiftKey) {
+                        e.preventDefault()
+                        void handleAskModalFollowup()
+                      }
+                    }}
+                  />
+                  <button
+                    type="button"
+                    onClick={() => void handleAskModalFollowup()}
+                    disabled={isAskingFollowup || !feedbackModalFollowup.trim()}
+                    className="mt-2 rounded-xl bg-sky-500 px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-sky-400 disabled:opacity-60"
+                  >
+                    {isAskingFollowup ? '답변 생성 중...' : '질문하기'}
+                  </button>
+                  {feedbackModalAnswer && (
+                    <div className="mt-3 rounded-xl bg-white p-3 shadow-sm">
+                      <div className="prose prose-sm max-w-none text-slate-700">
+                        <ReactMarkdown>{feedbackModalAnswer}</ReactMarkdown>
+                      </div>
+                    </div>
+                  )}
+                </div>
+
                 <div className="flex gap-3">
                   <button
                     type="button"
-                    onClick={() => setFeedbackModalResult(null)}
+                    onClick={() => { setFeedbackModalResult(null); setFeedbackModalAnswer('') }}
                     className="flex-1 rounded-2xl border border-slate-200 bg-white px-5 py-3 text-sm font-medium text-slate-600 transition hover:bg-slate-50"
                   >
                     다시 제출
                   </button>
                   <button
                     type="button"
-                    onClick={() => { setShowFeedbackModal(false); setFeedbackModalResult(null) }}
+                    onClick={() => { setShowFeedbackModal(false); setFeedbackModalResult(null); setFeedbackModalAnswer('') }}
                     className="flex-1 rounded-2xl bg-indigo-600 px-5 py-3 text-sm font-semibold text-white shadow-sm transition hover:bg-indigo-500"
                   >
                     닫기

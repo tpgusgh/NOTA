@@ -24,6 +24,7 @@ export interface SectionListItem {
   started_at: string
   ended_at: string
   name?: string
+  lesson_plan?: string
   has_summary: boolean
   ocr_count: number
   stt_count: number
@@ -143,9 +144,11 @@ export async function clearBoardState(session_id: string): Promise<BoardStateRes
   return response.json()
 }
 
-export async function startClass(session_id: string): Promise<ClassStateResponse> {
+export async function startClass(session_id: string, lesson_plan?: string): Promise<ClassStateResponse> {
   const response = await fetch(`${baseUrl}/api/session/${session_id}/start`, {
     method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ lesson_plan: lesson_plan ?? null }),
   })
 
   if (!response.ok) {

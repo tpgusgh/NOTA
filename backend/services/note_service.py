@@ -69,15 +69,17 @@ def generate_section_summary(request: SectionSummaryRequest) -> NoteGenerateResp
     section = sections[request.section_index]
     board_text = '\n'.join(section.ocr_history).strip() or '칠판 기록 없음'
     speech_text = '\n'.join(section.stt_history).strip() or '음성 기록 없음'
+    lesson_plan_line = f'오늘 수업 계획: {section.lesson_plan}\n' if section.lesson_plan else ''
 
     prompt = (
         f'당신은 교육 전문가입니다. 아래는 수업의 칠판 판서 내용과 교사 음성 내용입니다.\n'
         f'수업 제목: {session.title}\n'
-        f'학습 목표: {session.goals}\n\n'
+        f'학습 목표: {session.goals}\n'
+        f'{lesson_plan_line}\n'
         f'칠판 판서 내용:\n{board_text}\n\n'
         f'교사 음성 내용:\n{speech_text}\n\n'
-        f'이 수업 내용을 학생이 이해하기 쉽게 핵심 중심으로 구조화된 요약 노트를 생성해주세요.\n'
-        f'형식: 수업 제목 / 학습 목표 / 핵심 개념 / 세부 내용 / 정리'
+        f'이 수업 내용을 학생이 이해하기 쉽게 마크다운 형식으로 구조화된 요약 노트를 생성해주세요.\n'
+        f'형식: ## 수업 제목 / ## 학습 목표 / ## 핵심 개념 / ## 세부 내용 / ## 정리'
     )
 
     try:

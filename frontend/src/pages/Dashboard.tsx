@@ -13,6 +13,14 @@ import {
 } from '../utils/session'
 import type { SessionInfoResponse } from '../api/session'
 
+interface ConfirmModal {
+  title: string
+  message: string
+  confirmLabel: string
+  confirmClass: string
+  onConfirm: () => void
+}
+
 function Dashboard() {
   const navigate = useNavigate()
   const [sessionId, setSessionId] = useState<string | null>(null)
@@ -20,6 +28,7 @@ function Dashboard() {
   const [sessionInfo, setSessionInfo] = useState<SessionInfoResponse | null>(null)
   const [joinedSessions, setJoinedSessions] = useState(getJoinedSessions())
   const [status, setStatus] = useState('')
+  const [confirmModal, setConfirmModal] = useState<ConfirmModal | null>(null)
 
   useEffect(() => {
     const storedSessionId = getStoredSessionId()
@@ -49,7 +58,7 @@ function Dashboard() {
     navigate('/classroom')
   }
 
-  const handleLeaveSession = (targetSessionId: string) => {
+  const doLeaveSession = (targetSessionId: string) => {
     removeJoinedSession(targetSessionId)
     if (targetSessionId === sessionId) {
       clearSession()
@@ -60,24 +69,43 @@ function Dashboard() {
     setJoinedSessions(getJoinedSessions())
   }
 
-  const handleDeleteSession = async (targetSessionId: string, title: string) => {
-    if (!window.confirm(`"${title}" 수업을 완전히 삭제하시겠습니까?\n삭제하면 모든 수업 데이터가 사라지며 복구할 수 없습니다.`)) return
-    try {
-      await deleteSession(targetSessionId)
-      removeJoinedSession(targetSessionId)
-      if (targetSessionId === sessionId) {
-        clearSession()
-        setSessionId(null)
-        setUserRole(null)
-        setSessionInfo(null)
-      }
-      setJoinedSessions(getJoinedSessions())
-    } catch {
-      setStatus('수업 삭제에 실패했습니다.')
-    }
+  const handleLeaveSession = (targetSessionId: string, title: string) => {
+    setConfirmModal({
+      title: '수업 나가기',
+      message: `"${title}" 수업에서 나가시겠습니까?\n목록에서 제거되지만 다시 코드로 참여할 수 있습니다.`,
+      confirmLabel: '나가기',
+      confirmClass: 'rounded-xl bg-slate-700 px-5 py-2.5 text-sm font-semibold text-white transition hover:bg-slate-600',
+      onConfirm: () => { doLeaveSession(targetSessionId); setConfirmModal(null) },
+    })
+  }
+
+  const handleDeleteSession = (targetSessionId: string, title: string) => {
+    setConfirmModal({
+      title: '수업 삭제',
+      message: `"${title}" 수업을 완전히 삭제하시겠습니까?\n삭제하면 모든 수업 데이터가 사라지며 복구할 수 없습니다.`,
+      confirmLabel: '삭제하기',
+      confirmClass: 'rounded-xl bg-rose-600 px-5 py-2.5 text-sm font-semibold text-white transition hover:bg-rose-500',
+      onConfirm: async () => {
+        setConfirmModal(null)
+        try {
+          await deleteSession(targetSessionId)
+          removeJoinedSession(targetSessionId)
+          if (targetSessionId === sessionId) {
+            clearSession()
+            setSessionId(null)
+            setUserRole(null)
+            setSessionInfo(null)
+          }
+          setJoinedSessions(getJoinedSessions())
+        } catch {
+          setStatus('수업 삭제에 실패했습니다.')
+        }
+      },
+    })
   }
 
   return (
+    <>
     <main className="page-shell space-y-6">
       {/* 히어로 헤더 */}
       <div className="rounded-3xl bg-gradient-to-br from-indigo-50 via-white to-violet-50 p-8 shadow-sm ring-1 ring-indigo-100">
@@ -228,7 +256,7 @@ function Dashboard() {
                   ) : (
                     <button
                       type="button"
-                      onClick={() => handleLeaveSession(item.session_id)}
+                      onClick={() => handleLeaveSession(item.session_id, item.title)}
                       className="rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-slate-600 transition hover:bg-slate-50"
                     >
                       수업 나가기
@@ -242,6 +270,33 @@ function Dashboard() {
         </div>
       )}
     </main>
+
+    {/* 확인 모달 */}
+    {confirmModal && (
+      <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm">
+        <div className="mx-4 w-full max-w-sm rounded-3xl bg-white p-7 shadow-2xl">
+          <h3 className="text-lg font-bold text-slate-900">{confirmModal.title}</h3>
+          <p className="mt-3 whitespace-pre-line text-sm leading-relaxed text-slate-600">{confirmModal.message}</p>
+          <div className="mt-6 flex justify-end gap-3">
+            <button
+              type="button"
+              onClick={() => setConfirmModal(null)}
+              className="rounded-xl border border-slate-200 bg-white px-5 py-2.5 text-sm font-semibold text-slate-600 transition hover:bg-slate-50"
+            >
+              취소
+            </button>
+            <button
+              type="button"
+              onClick={() => void confirmModal.onConfirm()}
+              className={confirmModal.confirmClass}
+            >
+              {confirmModal.confirmLabel}
+            </button>
+          </div>
+        </div>
+      </div>
+    )}
+    </>
   )
 }
 

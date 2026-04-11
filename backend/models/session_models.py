@@ -7,6 +7,7 @@ class SectionData(BaseModel):
     started_at: str
     ended_at: str
     name: Optional[str] = None
+    lesson_plan: Optional[str] = None
     ocr_history: List[str] = Field(default_factory=list)
     stt_history: List[str] = Field(default_factory=list)
     board_snapshot: Optional[str] = None
@@ -18,9 +19,14 @@ class SectionListItem(BaseModel):
     started_at: str
     ended_at: str
     name: Optional[str] = None
+    lesson_plan: Optional[str] = None
     has_summary: bool
     ocr_count: int
     stt_count: int
+
+
+class StartClassRequest(BaseModel):
+    lesson_plan: Optional[str] = None
 
 
 class StopClassRequest(BaseModel):
@@ -171,6 +177,7 @@ class FeedbackFollowupRequest(BaseModel):
     session_id: str
     question: str
     student_note: Optional[str] = None
+    section_index: Optional[int] = None
 
 
 class FeedbackFollowupResponse(BaseModel):
@@ -198,3 +205,4 @@ class SessionData(BaseModel):
     sections: List[SectionData] = Field(default_factory=list)
     current_section_ocr_start: int = 0
     current_section_stt_start: int = 0
+    current_lesson_plan: Optional[str] = None
