@@ -113,9 +113,7 @@ function Dashboard() {
         <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
           <div>
             <div className="flex items-center gap-3">
-              <div className="flex h-10 w-10 items-center justify-center rounded-2xl bg-indigo-600 text-white text-lg font-bold shadow-sm">
-                C
-              </div>
+              <img src="/logo.svg" alt="NOTA" className="h-10 w-10" />
               <h1 className="text-3xl font-bold text-slate-900">NOTA</h1>
             </div>
             <p className="mt-3 max-w-2xl leading-8 text-slate-500">
