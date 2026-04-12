@@ -29,6 +29,7 @@ function Dashboard() {
   const [joinedSessions, setJoinedSessions] = useState(getJoinedSessions())
   const [status, setStatus] = useState('')
   const [confirmModal, setConfirmModal] = useState<ConfirmModal | null>(null)
+  const [showGuide, setShowGuide] = useState(false)
 
   useEffect(() => {
     const storedSessionId = getStoredSessionId()
@@ -121,15 +122,24 @@ function Dashboard() {
               수업을 만들고 참여하는 AI 교육 플랫폼입니다. 수업을 생성하거나 코드로 참여하고, 아래에서 내가 들어간 수업을 확인하세요.
             </p>
           </div>
-          {userRole && (
+          <div className="flex flex-wrap gap-3">
             <button
               type="button"
-              onClick={handleLogout}
-              className="w-full rounded-2xl border border-slate-200 bg-white px-5 py-3 text-sm font-medium text-slate-600 shadow-sm transition hover:bg-slate-50 sm:w-auto"
+              onClick={() => setShowGuide(true)}
+              className="w-full rounded-2xl border border-indigo-200 bg-indigo-50 px-5 py-3 text-sm font-medium text-indigo-700 shadow-sm transition hover:bg-indigo-100 sm:w-auto"
             >
-              로그아웃
+              사용 가이드
             </button>
-          )}
+            {userRole && (
+              <button
+                type="button"
+                onClick={handleLogout}
+                className="w-full rounded-2xl border border-slate-200 bg-white px-5 py-3 text-sm font-medium text-slate-600 shadow-sm transition hover:bg-slate-50 sm:w-auto"
+              >
+                로그아웃
+              </button>
+            )}
+          </div>
         </div>
       </div>
 
@@ -270,6 +280,96 @@ function Dashboard() {
         </div>
       )}
     </main>
+
+    {/* 사용 가이드 모달 */}
+    {showGuide && (
+      <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm p-4">
+        <div className="w-full max-w-lg rounded-3xl bg-white shadow-2xl overflow-hidden">
+          {/* 헤더 */}
+          <div className="bg-gradient-to-r from-indigo-600 to-violet-600 px-7 py-6">
+            <h2 className="text-xl font-bold text-white">NOTA 사용 가이드</h2>
+            <p className="mt-1 text-sm text-indigo-100">AI 기반 수업 필기 플랫폼</p>
+          </div>
+
+          <div className="overflow-y-auto max-h-[70vh] px-7 py-6 space-y-6">
+            {/* 교사 */}
+            <div>
+              <div className="flex items-center gap-2 mb-3">
+                <span className="rounded-full bg-violet-100 px-3 py-1 text-xs font-semibold text-violet-700">교사</span>
+                <span className="text-sm font-semibold text-slate-700">수업 진행 흐름</span>
+              </div>
+              <ol className="space-y-2.5">
+                {[
+                  ['수업 만들기', '수업 제목·목표·키워드를 입력해 세션을 생성합니다. 학생에게 세션 코드를 공유하세요.'],
+                  ['수업 시작', '수업실에서 "수업 시작" 버튼을 누르고 오늘의 수업 계획을 입력합니다.'],
+                  ['화면 공유 & OCR', '전자칠판 화면을 공유하면 10초마다 자동으로 판서 내용이 기록됩니다.'],
+                  ['음성 인식(STT)', '마이크 버튼을 켜면 교사 음성이 실시간으로 텍스트로 저장됩니다.'],
+                  ['수업 종료', '"수업 종료" 버튼을 누르면 마지막 OCR 후 섹션 이름을 입력해 저장합니다.'],
+                  ['노트 생성·승인', '노트 검토 화면에서 AI가 생성한 구조화 노트를 확인하고 승인합니다.'],
+                ].map(([title, desc], i) => (
+                  <li key={i} className="flex gap-3">
+                    <span className="mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-violet-600 text-xs font-bold text-white">{i + 1}</span>
+                    <div>
+                      <p className="text-sm font-semibold text-slate-800">{title}</p>
+                      <p className="text-xs text-slate-500 leading-relaxed">{desc}</p>
+                    </div>
+                  </li>
+                ))}
+              </ol>
+            </div>
+
+            <div className="border-t border-slate-100" />
+
+            {/* 학생 */}
+            <div>
+              <div className="flex items-center gap-2 mb-3">
+                <span className="rounded-full bg-sky-100 px-3 py-1 text-xs font-semibold text-sky-700">학생</span>
+                <span className="text-sm font-semibold text-slate-700">수업 참여 흐름</span>
+              </div>
+              <ol className="space-y-2.5">
+                {[
+                  ['수업 참여', '교사에게 받은 세션 코드를 입력해 수업에 참여합니다.'],
+                  ['칠판 보기', '교사가 공유한 칠판 화면을 실시간으로 확인할 수 있습니다.'],
+                  ['개인 필기', '화면 오른쪽 캔버스에 직접 필기하거나 텍스트로 메모합니다.'],
+                  ['필기 피드백', '수업 후 텍스트 필기를 입력하거나 사진을 찍어 올리면 AI가 누락 항목·보완 제안·잘한 점을 분석해줍니다.'],
+                  ['후속 질문', '피드백 결과에서 이해가 안 되는 부분을 AI에게 추가 질문할 수 있습니다.'],
+                ].map(([title, desc], i) => (
+                  <li key={i} className="flex gap-3">
+                    <span className="mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-sky-500 text-xs font-bold text-white">{i + 1}</span>
+                    <div>
+                      <p className="text-sm font-semibold text-slate-800">{title}</p>
+                      <p className="text-xs text-slate-500 leading-relaxed">{desc}</p>
+                    </div>
+                  </li>
+                ))}
+              </ol>
+            </div>
+
+            <div className="border-t border-slate-100" />
+
+            {/* 팁 */}
+            <div className="rounded-2xl bg-amber-50 border border-amber-100 p-4">
+              <p className="text-xs font-semibold text-amber-700 mb-1">TIP</p>
+              <ul className="space-y-1 text-xs text-amber-800 leading-relaxed list-disc pl-4">
+                <li>수업 중에는 필기 피드백 기능이 비활성화됩니다.</li>
+                <li>세션 코드는 수업 화면 상단에서 확인할 수 있습니다.</li>
+                <li>결석한 경우 공개 노트 링크로 수업 내용을 확인하세요.</li>
+              </ul>
+            </div>
+          </div>
+
+          <div className="px-7 py-5 border-t border-slate-100">
+            <button
+              type="button"
+              onClick={() => setShowGuide(false)}
+              className="w-full rounded-2xl bg-indigo-600 py-3 text-sm font-semibold text-white transition hover:bg-indigo-500"
+            >
+              확인
+            </button>
+          </div>
+        </div>
+      </div>
+    )}
 
     {/* 확인 모달 */}
     {confirmModal && (
